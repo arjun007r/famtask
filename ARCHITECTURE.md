@@ -113,6 +113,19 @@ falls off the list.
 - Lists outside the pick stay fully usable on demand (`/list <name>`, "show
   my business list"); they are just not pushed daily.
 
+## Notifications
+
+The digest is a daily push, but a task assigned to you at 2pm should not wait
+until 9am tomorrow. `applyParsed` returns an `InboxResult` of
+`{ reply, notify }`: the reply goes back to the chat the message came from,
+and `notify` carries DMs for people who are not reading it —
+
+- the assignee, when a task is created for them or passed to them;
+- the person who raised a task, when someone else moves or comments on it.
+
+Nobody is notified about their own action, and anyone whose DM chat the bot
+has not seen yet is skipped rather than failing the whole update.
+
 A digest is the member's top 5 incomplete tasks across their digest lists,
 labelled by list, with one-tap ✓/▶ buttons — plus up to 3 unclaimed
 group tasks with Claim buttons. Unclaimed work is also posted once a day to

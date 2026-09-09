@@ -7,7 +7,13 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { planDigest, applyPlan } from './agents/digest-writer.ts';
 import { parseMessage } from './agents/parser.ts';
-import { renderDigest, renderDigestListPicker, renderGroupBoard, renderTaskList } from './channel/format.ts';
+import {
+  renderDigest,
+  renderDigestListPicker,
+  renderGroupBoard,
+  renderTaskDetail,
+  renderTaskList,
+} from './channel/format.ts';
 import type {
   InboundAction,
   InboundMessage,
@@ -23,7 +29,7 @@ import {
   membersDueNow,
   recordDigestSends,
 } from './core/services/digest.ts';
-import { applyParsed, type InboxContext } from './core/services/inbox.ts';
+import { applyParsed, type InboxContext, type Notification } from './core/services/inbox.ts';
 import {
   allLists,
   createList,
@@ -37,6 +43,7 @@ import { answerQuery } from './core/services/queries.ts';
 import {
   addMember,
   ensureFamily,
+  getMember,
   getMemberByTelegramUserId,
   listMembers,
   rememberChatId,
@@ -44,8 +51,7 @@ import {
   updateMemberPrefs,
 } from './core/services/registry.ts';
 import { claimOnce } from './core/services/state.ts';
-import { claim, createTask, getTaskView, queryTasks, setState } from './core/services/tasks.ts';
-import { stateLabel } from './core/state-machine.ts';
+import { claim, createTask, getTaskView, getThread, queryTasks, setState } from './core/services/tasks.ts';
 import type { FamilyMember } from './core/types.ts';
 
 export interface AppDeps {
@@ -147,8 +153,31 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
     rawText: inbound.text,
   };
 
-  const response = await guard(() => applyParsed(db, ctx, parsed));
-  if (response) await reply(deps, inbound, response);
+  let result;
+  try {
+    result = await applyParsed(db, ctx, parsed);
+  } catch (err) {
+    if (!(err instanceof UserError)) throw err;
+    await reply(deps, inbound, { text: err.message });
+    return;
+  }
+
+  if (result.reply) await reply(deps, inbound, result.reply);
+  await deliver(deps, result.notify, inbound.chatId);
+}
+
+/** DM people who need to know but are not reading the chat this came from. */
+async function deliver(
+  deps: AppDeps,
+  notifications: Notification[],
+  originChatId: string,
+): Promise<void> {
+  for (const note of notifications) {
+    const member = await getMember(deps.db, note.memberId).catch(() => null);
+    // Skip anyone with no DM open yet, and anyone already looking at this chat.
+    if (!member?.telegram_chat_id || member.telegram_chat_id === originChatId) continue;
+    await deps.channel.send({ chatId: member.telegram_chat_id, ...note.message });
+  }
 }
 
 export async function handleInboundAction(deps: AppDeps, inbound: InboundAction): Promise<void> {
@@ -188,9 +217,8 @@ export async function handleInboundAction(deps: AppDeps, inbound: InboundAction)
         return;
       }
       case 'task_show': {
-        const task = await getTaskView(db, act.taskId);
         await channel.acknowledge(inbound.ackToken);
-        await channel.send({ chatId: inbound.chatId, ...renderTaskList(stateLabel(task.state), [task]) });
+        await channel.send({ chatId: inbound.chatId, ...(await taskDetail(db, act.taskId, member)) });
         return;
       }
       case 'digest_list_toggle': {
@@ -420,6 +448,14 @@ async function runCommand(
         return { text: `I don't know ${cmd}.\n\n${HELP}` };
     }
   });
+}
+
+/** Full task card: description, assignee, and the clarification thread. */
+async function taskDetail(db: Db, taskId: string, viewer: FamilyMember): Promise<RenderedMessage> {
+  const task = await getTaskView(db, taskId);
+  const thread = await getThread(db, taskId);
+  const members = await listMembers(db, viewer.family_id);
+  return renderTaskDetail(task, thread, new Map(members.map((m) => [m.id, m.name])));
 }
 
 async function digestListPicker(db: Db, member: FamilyMember): Promise<RenderedMessage> {

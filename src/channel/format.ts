@@ -52,6 +52,7 @@ export function renderDigest(digest: Digest): RenderedMessage {
     buttons.push([
       { label: `✓ ${truncate(t.title, 22)}`, action: { kind: 'task_done', taskId: t.id } },
       { label: '▶', action: { kind: 'task_start', taskId: t.id } },
+      { label: '💬', action: { kind: 'task_show', taskId: t.id } },
     ]);
   }
   for (const t of unclaimed) {

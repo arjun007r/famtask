@@ -280,28 +280,27 @@ describe('inbox', () => {
 
   it('ignores chit-chat and low-confidence reads', async () => {
     const ctx = ctxFor(env.familyId, env.arjun, 'group', 'haha same');
-    assert.equal(await applyParsed(env.db, ctx, { intent: 'chitchat', confidence: 0.9 }), null);
-    assert.equal(
-      await applyParsed(env.db, ctx, {
-        intent: 'new_task',
-        confidence: 0.6,
-        tasks: [{ title: 'maybe a task' }],
-      }),
-      null,
-      'group chat needs a higher bar than a DM',
-    );
+    assert.equal((await applyParsed(env.db, ctx, { intent: 'chitchat', confidence: 0.9 })).reply, null);
+    const lowConfidence = await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.6,
+      tasks: [{ title: 'maybe a task' }],
+    });
+    assert.equal(lowConfidence.reply, null, 'group chat needs a higher bar than a DM');
+    assert.equal((await queryTasks(env.db, { familyId: env.familyId })).length, 0);
   });
 
   it('creates a task assigned to the named member, in a new list', async () => {
     const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Priya can you renew the insurance by friday, urgent');
-    const reply = await applyParsed(env.db, ctx, {
+    const result = await applyParsed(env.db, ctx, {
       intent: 'new_task',
       confidence: 0.9,
       tasks: [
         { title: 'Renew car insurance', list: 'Business', assignee: 'Priya', priority: 'high', due_date: '2026-09-11' },
       ],
     });
-    assert.ok(reply);
+    assert.ok(result.reply);
+    assert.deepEqual(result.notify.map((n) => n.memberId), [env.priya.id], 'the assignee is told now, not at 9am');
     const [task] = await queryTasks(env.db, { familyId: env.familyId });
     assert.equal(task!.assigned_to, env.priya.id);
     assert.equal(task!.list_name, 'Business');
@@ -340,14 +339,14 @@ describe('inbox', () => {
       assignedTo: env.priya.id,
     });
     const ctx = ctxFor(env.familyId, env.priya, 'dm', 'stuck on the car insurance, need the policy number');
-    const reply = await applyParsed(env.db, ctx, {
+    const result = await applyParsed(env.db, ctx, {
       intent: 'status_update',
       confidence: 0.9,
       target_task_hint: 'car insurance',
       new_state: 'blocked',
       comment: 'needs the policy number',
     });
-    assert.match(reply!.text, /Blocked/);
+    assert.match(result.reply!.text, /Blocked/);
     const [task] = await queryTasks(env.db, { familyId: env.familyId });
     assert.equal(task!.state, 'blocked');
   });
@@ -355,15 +354,49 @@ describe('inbox', () => {
   it('says so instead of guessing when no task matches', async () => {
     await createTask(env.db, { familyId: env.familyId, listId: env.home.id, title: 'Renew car insurance', assigneeKind: 'member', assignedTo: env.arjun.id });
     const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'finished the loft conversion');
-    const reply = await applyParsed(env.db, ctx, {
+    const result = await applyParsed(env.db, ctx, {
       intent: 'status_update',
       confidence: 0.9,
       target_task_hint: 'loft conversion',
       new_state: 'done',
     });
-    assert.match(reply!.text, /can't find a task/);
+    assert.match(result.reply!.text, /can't find a task/);
+    assert.deepEqual(result.notify, [], 'a failed match must not DM anyone');
     const [task] = await queryTasks(env.db, { familyId: env.familyId });
     assert.equal(task!.state, 'todo');
+  });
+
+  it('tells the other party when a task bounces back', async () => {
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Renew car insurance',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.priya.id,
+    });
+    const ctx = ctxFor(env.familyId, env.priya, 'dm', 'blocked on the car insurance');
+    const result = await applyParsed(env.db, ctx, {
+      intent: 'status_update',
+      confidence: 0.9,
+      target_task_hint: 'car insurance',
+      new_state: 'blocked',
+    });
+    assert.deepEqual(
+      result.notify.map((n) => n.memberId),
+      [env.arjun.id],
+      'whoever raised it should hear that it is stuck',
+    );
+  });
+
+  it('does not notify the speaker about their own task', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'I need to call the plumber');
+    const result = await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Call the plumber', assignee: 'me' }],
+    });
+    assert.deepEqual(result.notify, []);
   });
 
   it('answers a query without writing anything', async () => {

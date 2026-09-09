@@ -22,15 +22,20 @@
 - **Worker** (`src/worker.ts`) — webhook with secret-token check, update
   dedupe with rollback on failure, hourly cron.
 - **CLI** (`src/cli.ts`) — drives the same `app.ts` with a console channel.
-- **Tests** — 35 passing (`npm test`), covering the state machine, ranking
+- **Notifications** — assignment, reassignment, status changes and comments
+  DM the other party immediately; the daily digest is the backstop, not the
+  only channel.
+- **Task detail view** — 💬 on any digest row opens the full card with the
+  clarification thread.
+- **Tests** — 37 passing (`npm test`), covering the state machine, ranking
   and rotation, list-cap behaviour, digest assembly and timezone gating,
   inbox intent handling against fixtures, task matching, agent-output
   sanitising, and the Telegram codec/update parser.
 
 ## Verified
 
-`npm test` (35/35), `npm run typecheck` clean, and a CLI walkthrough:
-seed → `/add` → `/tasks` → button tap → digest → `/me`.
+`npm test` (37/37), `npm run typecheck` clean, and a CLI walkthrough:
+seed → `/add` → `/tasks` → button tap → task detail → digest → `/me`.
 
 **Not yet verified:** the two agents against the live Claude API — no
 `ANTHROPIC_API_KEY` was available in the build environment. The request

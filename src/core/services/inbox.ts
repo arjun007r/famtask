@@ -23,6 +23,18 @@ import { addComment, assign, createTask, getTaskView, queryTasks, setState } fro
  *  it needs a clearer signal before anything is written. */
 export const CONFIDENCE_FLOOR = { dm: 0.5, group: 0.65 } as const;
 
+export interface Notification {
+  memberId: string;
+  message: RenderedMessage;
+}
+
+export interface InboxResult {
+  /** Sent back into the chat the message came from. */
+  reply: RenderedMessage | null;
+  /** DMs to people who are not in that chat but need to know. */
+  notify: Notification[];
+}
+
 export interface InboxContext {
   familyId: string;
   speaker: FamilyMember;
@@ -32,13 +44,15 @@ export interface InboxContext {
   rawText: string;
 }
 
+const NOTHING: InboxResult = { reply: null, notify: [] };
+
 export async function applyParsed(
   db: Db,
   ctx: InboxContext,
   parsed: ParsedMessage,
-): Promise<RenderedMessage | null> {
-  if (parsed.intent === 'chitchat') return null;
-  if ((parsed.confidence ?? 0) < CONFIDENCE_FLOOR[ctx.chatType]) return null;
+): Promise<InboxResult> {
+  if (parsed.intent === 'chitchat') return NOTHING;
+  if ((parsed.confidence ?? 0) < CONFIDENCE_FLOOR[ctx.chatType]) return NOTHING;
 
   switch (parsed.intent) {
     case 'new_task':
@@ -51,23 +65,38 @@ export async function applyParsed(
     case 'comment':
       return applyComment(db, ctx, parsed);
     case 'query':
-      return answerQuery(db, ctx.speaker, {
-        scope: parsed.query?.scope ?? 'mine',
-        member: parsed.query?.member,
-        list: parsed.query?.list,
-        search: parsed.query?.search,
-      });
+      return {
+        reply: await answerQuery(db, ctx.speaker, {
+          scope: parsed.query?.scope ?? 'mine',
+          member: parsed.query?.member,
+          list: parsed.query?.list,
+          search: parsed.query?.search,
+        }),
+        notify: [],
+      };
     default:
-      return null;
+      return NOTHING;
   }
+}
+
+/**
+ * Who needs a DM about this task, other than whoever is already reading the
+ * reply. Without this an assignee learns about their own task at 9am
+ * tomorrow, which is too late to be useful.
+ */
+function audienceFor(task: TaskView, speakerId: string): string[] {
+  const people = new Set<string>();
+  if (task.assigned_to && task.assigned_to !== speakerId) people.add(task.assigned_to);
+  if (task.created_by && task.created_by !== speakerId) people.add(task.created_by);
+  return [...people];
 }
 
 async function createFromParsed(
   db: Db,
   ctx: InboxContext,
   specs: ParsedTask[],
-): Promise<RenderedMessage | null> {
-  if (specs.length === 0) return null;
+): Promise<InboxResult> {
+  if (specs.length === 0) return NOTHING;
   const members = await listMembers(db, ctx.familyId);
   const created: TaskView[] = [];
 
@@ -95,56 +124,95 @@ async function createFromParsed(
     created.push(await getTaskView(db, task.id));
   }
 
-  if (created.length === 0) return null;
-  return renderTaskList(created.length === 1 ? 'Added:' : `Added ${created.length} tasks:`, created);
+  if (created.length === 0) return NOTHING;
+
+  const notify: Notification[] = [];
+  for (const task of created) {
+    if (task.assigned_to && task.assigned_to !== ctx.speaker.id) {
+      notify.push({
+        memberId: task.assigned_to,
+        message: renderTaskList(`${ctx.speaker.name} added this for you:`, [task]),
+      });
+    }
+  }
+
+  return {
+    reply: renderTaskList(
+      created.length === 1 ? 'Added:' : `Added ${created.length} tasks:`,
+      created,
+    ),
+    notify,
+  };
 }
 
 async function applyStatusUpdate(
   db: Db,
   ctx: InboxContext,
   parsed: ParsedMessage,
-): Promise<RenderedMessage | null> {
+): Promise<InboxResult> {
   const task = await findTarget(db, ctx, parsed);
-  if (!task) return notFound(db, ctx, parsed);
+  if (!task) return { reply: await notFound(db, ctx, parsed), notify: [] };
   const to = parsed.new_state ?? 'in_progress';
   try {
     await setState(db, task.id, to, ctx.speaker.id, parsed.comment ?? null);
   } catch (err) {
-    if (err instanceof UserError) return { text: err.message };
+    if (err instanceof UserError) return { reply: { text: err.message }, notify: [] };
     throw err;
   }
   const fresh = await getTaskView(db, task.id);
-  return { text: `${stateLabel(to)}: ${fresh.title} [${fresh.list_name}]` };
+  const line = `${stateLabel(to)}: ${fresh.title} [${fresh.list_name}]`;
+  const note = parsed.comment ? `\n${parsed.comment}` : '';
+  return {
+    reply: { text: line },
+    notify: audienceFor(fresh, ctx.speaker.id).map((memberId) => ({
+      memberId,
+      message: { text: `${ctx.speaker.name} — ${line}${note}` },
+    })),
+  };
 }
 
 async function applyReassignment(
   db: Db,
   ctx: InboxContext,
   parsed: ParsedMessage,
-): Promise<RenderedMessage | null> {
+): Promise<InboxResult> {
   const task = await findTarget(db, ctx, parsed);
-  if (!task) return notFound(db, ctx, parsed);
+  if (!task) return { reply: await notFound(db, ctx, parsed), notify: [] };
   const members = await listMembers(db, ctx.familyId);
   const { kind, memberId } = resolveAssignee(members, parsed.new_assignee, ctx, 'unassigned');
   await assign(db, task.id, { kind, memberId }, ctx.speaker.id, parsed.comment ?? null);
   const who =
     kind === 'member' ? members.find((m) => m.id === memberId)?.name ?? 'someone' : 'the family';
-  return { text: `Reassigned to ${who}: ${task.title} [${task.list_name}]` };
+  const fresh = await getTaskView(db, task.id);
+  return {
+    reply: { text: `Reassigned to ${who}: ${task.title} [${task.list_name}]` },
+    notify: audienceFor(fresh, ctx.speaker.id).map((id) => ({
+      memberId: id,
+      message: renderTaskList(`${ctx.speaker.name} passed this to you:`, [fresh]),
+    })),
+  };
 }
 
 async function applyComment(
   db: Db,
   ctx: InboxContext,
   parsed: ParsedMessage,
-): Promise<RenderedMessage | null> {
+): Promise<InboxResult> {
   const task = await findTarget(db, ctx, parsed);
-  if (!task) return notFound(db, ctx, parsed);
+  if (!task) return { reply: await notFound(db, ctx, parsed), notify: [] };
   const body = parsed.comment?.trim() || ctx.rawText;
   await addComment(db, task.id, ctx.speaker.id, body);
   if (parsed.new_state && parsed.new_state !== task.state) {
     await setState(db, task.id, parsed.new_state, ctx.speaker.id);
   }
-  return { text: `Noted on "${task.title}".` };
+  const fresh = await getTaskView(db, task.id);
+  return {
+    reply: { text: `Noted on "${task.title}".` },
+    notify: audienceFor(fresh, ctx.speaker.id).map((memberId) => ({
+      memberId,
+      message: { text: `${ctx.speaker.name} on "${fresh.title}":\n${body}` },
+    })),
+  };
 }
 
 async function findTarget(
