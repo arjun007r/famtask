@@ -61,12 +61,12 @@ key, and (later) the family group.
 4. **Deploy and register the webhook.**
    ```bash
    npm run deploy
-   curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-     -H 'content-type: application/json' \
-     -d '{"url":"https://famtask.<subdomain>.workers.dev/telegram/webhook",
-          "secret_token":"<the same TELEGRAM_WEBHOOK_SECRET>",
-          "allowed_updates":["message","callback_query","my_chat_member"]}'
+   TELEGRAM_BOT_TOKEN=<token> TELEGRAM_WEBHOOK_SECRET=<same secret as step 3> \
+     node scripts/set-webhook.mjs https://famtask.<subdomain>.workers.dev
    ```
+   `node scripts/set-webhook.mjs --status` shows what is registered, the
+   bot's username, and Telegram's last delivery error — the first place to
+   look if the bot goes quiet.
 
 5. **Bootstrap the family.** DM the bot. The first person to do so becomes
    the first member. Add the second:
