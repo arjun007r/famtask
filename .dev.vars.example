@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `wrangler dev`; set the same keys as secrets in prod
+# via `wrangler secret put <NAME>`.
+TELEGRAM_BOT_TOKEN=
+# Random string you invent; also passed to setWebhook as secret_token so only
+# Telegram can call the webhook.
+TELEGRAM_WEBHOOK_SECRET=
+ANTHROPIC_API_KEY=
