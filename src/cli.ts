@@ -11,6 +11,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { handleInboundAction, handleInboundMessage, runScheduledDigests, type AppDeps } from './app.ts';
+import { AgentUnavailableError } from './agents/client.ts';
 import type { MessagingChannel } from './channel/types.ts';
 import { fileDb } from './core/db/sqlite.ts';
 import { addMember, ensureFamily, getMemberByTelegramUserId, listMembers } from './core/services/registry.ts';
@@ -152,6 +153,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
+  if (err instanceof AgentUnavailableError) {
+    console.error(`Agent unavailable: ${err.message}.`);
+    console.error('Slash commands still work without it — try: npm run cli -- say 1001 "/tasks"');
+  } else {
+    console.error(err instanceof Error ? err.message : err);
+  }
   process.exit(1);
 });

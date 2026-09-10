@@ -11,6 +11,52 @@ export function createClient(deps: AgentDeps): Anthropic {
   return new Anthropic({ apiKey: deps.apiKey });
 }
 
+/**
+ * The agent could not be reached at all — no key, no credit, rate limited,
+ * upstream down. Distinct from a null result, which means the model ran and
+ * had nothing to say. Callers must keep working without the agent rather
+ * than failing the whole update: a lapsed API key should not put the bot
+ * into a retry loop.
+ */
+export class AgentUnavailableError extends Error {
+  status: number | undefined;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'AgentUnavailableError';
+    this.status = status;
+  }
+}
+
+/**
+ * What to show a person. The raw API error goes to the logs, not the chat.
+ *
+ * Classified on `status` and message text rather than `instanceof`: the
+ * billing failure has no error class of its own (it is a 400 carrying a
+ * message), and `instanceof` silently stops matching when two copies of the
+ * SDK end up in the tree. Structural checks keep working in both cases.
+ */
+export function describeAgentFailure(err: unknown): string {
+  const status = errorStatus(err);
+  const message = err instanceof Error ? err.message : String(err ?? '');
+
+  if (/credit balance/i.test(message)) return 'the Anthropic account is out of credit';
+  if (status === 401) return 'the API key is not valid';
+  if (status === 403) return 'the API key lacks access';
+  if (status === 429) return 'it is rate limited right now';
+  if (status !== undefined && status >= 500) return 'the Anthropic API is having trouble';
+  if (/connection|network|fetch failed|ENOTFOUND|ECONNREFUSED/i.test(message)) {
+    return 'the Anthropic API is unreachable';
+  }
+  if (status !== undefined) return `the Anthropic API rejected the request (${status})`;
+  return 'the agent failed for an unknown reason';
+}
+
+function errorStatus(err: unknown): number | undefined {
+  const raw = (err as { status?: unknown })?.status;
+  return typeof raw === 'number' ? raw : undefined;
+}
+
 export interface StructuredCallOptions {
   system: string;
   input: string;
@@ -29,21 +75,27 @@ export async function structuredCall<T>(
   client: Anthropic,
   opts: StructuredCallOptions,
 ): Promise<T | null> {
-  const response = await client.messages.create({
-    model: opts.model ?? DEFAULT_MODEL,
-    max_tokens: opts.maxTokens ?? 2048,
-    output_config: { effort: opts.effort ?? 'low' },
-    system: opts.system,
-    tools: [
-      {
-        name: opts.tool.name,
-        description: opts.tool.description,
-        input_schema: opts.tool.input_schema,
-        strict: true,
-      },
-    ],
-    messages: [{ role: 'user', content: opts.input }],
-  });
+  let response;
+  try {
+    response = await client.messages.create({
+      model: opts.model ?? DEFAULT_MODEL,
+      max_tokens: opts.maxTokens ?? 2048,
+      output_config: { effort: opts.effort ?? 'low' },
+      system: opts.system,
+      tools: [
+        {
+          name: opts.tool.name,
+          description: opts.tool.description,
+          input_schema: opts.tool.input_schema,
+          strict: true,
+        },
+      ],
+      messages: [{ role: 'user', content: opts.input }],
+    });
+  } catch (err) {
+    console.error(`agent call ${opts.tool.name} failed`, err);
+    throw new AgentUnavailableError(describeAgentFailure(err), errorStatus(err));
+  }
 
   if (response.stop_reason === 'refusal') return null;
   for (const block of response.content) {

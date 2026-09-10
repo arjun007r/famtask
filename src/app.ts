@@ -5,6 +5,7 @@
  * is why neither of them contains any logic of its own.
  */
 import type Anthropic from '@anthropic-ai/sdk';
+import { AgentUnavailableError } from './agents/client.ts';
 import { planDigest, applyPlan } from './agents/digest-writer.ts';
 import { parseMessage } from './agents/parser.ts';
 import {
@@ -127,21 +128,36 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
     queryTasks(db, { familyId: family.id, limit: 40 }),
   ]);
 
-  const parsed = await parseMessage(
-    deps.anthropic,
-    inbound.text,
-    {
-      speakerName: member.name,
-      chatType: inbound.chatType,
-      memberNames: members.map((m) => m.name),
-      listNames: lists.map((l) => l.name),
-      openTasks: open.map(
-        (t) => `${t.title} [${t.list_name}] — ${t.assignee_name ?? t.assignee_kind}`,
-      ),
-      today: localDate(member.timezone, now(deps)),
-    },
-    deps.model,
-  );
+  let parsed;
+  try {
+    parsed = await parseMessage(
+      deps.anthropic,
+      inbound.text,
+      {
+        speakerName: member.name,
+        chatType: inbound.chatType,
+        memberNames: members.map((m) => m.name),
+        listNames: lists.map((l) => l.name),
+        openTasks: open.map(
+          (t) => `${t.title} [${t.list_name}] — ${t.assignee_name ?? t.assignee_kind}`,
+        ),
+        today: localDate(member.timezone, now(deps)),
+      },
+      deps.model,
+    );
+  } catch (err) {
+    if (!(err instanceof AgentUnavailableError)) throw err;
+    // Swallow deliberately: a retry cannot fix an expired key or an empty
+    // account, and throwing here would leave Telegram redelivering forever.
+    // Say so in a DM; stay quiet in the group rather than shouting billing
+    // errors at the whole family.
+    if (inbound.chatType === 'dm') {
+      await reply(deps, inbound, {
+        text: `I couldn't read that — ${err.message}. Nothing was saved. /add and the other commands still work.`,
+      });
+    }
+    return;
+  }
   if (!parsed) return;
 
   const ctx: InboxContext = {
@@ -276,10 +292,15 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
     let items = digest.items;
     let intro: string | null = null;
     if (deps.anthropic && items.length > 0) {
+      // The deterministic ranking already stands on its own, so an agent
+      // outage costs the intro line and nothing else. The digest still goes.
       const plan = await planDigest(deps.anthropic, member.name, items, {
         today,
         model: deps.model,
-      }).catch(() => null);
+      }).catch((err) => {
+        console.error('digest agent unavailable, sending ranked order', err);
+        return null;
+      });
       if (plan) {
         items = applyPlan(items, plan);
         intro = plan.intro || null;

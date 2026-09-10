@@ -27,32 +27,40 @@
   only channel.
 - **Task detail view** — 💬 on any digest row opens the full card with the
   clarification thread.
-- **Tests** — 37 passing (`npm test`), covering the state machine, ranking
+- **Agent-outage handling** — an unreachable API never fails an update or
+  triggers a Telegram retry loop; DMs get a plain sentence naming the cause,
+  the group stays quiet, commands and the digest keep working.
+- **Tests** — 41 passing (`npm test`), covering the state machine, ranking
   and rotation, list-cap behaviour, digest assembly and timezone gating,
   inbox intent handling against fixtures, task matching, agent-output
   sanitising, and the Telegram codec/update parser.
 
 ## Verified
 
-`npm test` (37/37), `npm run typecheck` clean, and a CLI walkthrough:
+`npm test` (41/41), `npm run typecheck` clean, and a CLI walkthrough:
 seed → `/add` → `/tasks` → button tap → task detail → digest → `/me`.
 
-**Not yet verified:** the two agents against the live Claude API — no
-`ANTHROPIC_API_KEY` was available in the build environment. The request
-shapes follow the current API (strict tool use, `output_config.effort`,
-`claude-opus-5`), and both call sites degrade safely on a null result, but
-the first real run is unproven. Test them with the CLI (below) before
-pointing the bot at a real chat.
+**Request shape confirmed against the live API.** Real calls reached
+Anthropic and were rejected at billing (400, empty account) and at auth
+(401, bad key) — both of which mean the model id, strict tool schema and
+`output_config.effort` were accepted. The failure path is now covered end
+to end.
+
+**Still unverified: parse quality.** No successful completion has run, so
+how well the parser classifies real family chat is unmeasured. That is
+step 1 below and needs credit on the account.
 
 ## Next
 
-1. **Set up the bot** — see README "Going live". Needs from you: a bot token
+1. **Buy credits** — console.anthropic.com → Plans & Billing. Until then
+   every free-text message is refused; slash commands work regardless.
+2. **Set up the bot** — see README "Going live". Needs from you: a bot token
    from BotFather, a Cloudflare account, an Anthropic API key.
-2. **Live-test the agents** — `ANTHROPIC_API_KEY=… npm run cli -- say 1001
+3. **Live-test the agents** — `ANTHROPIC_API_KEY=… npm run cli -- say 1001
    "can you book the dentist for friday, it's urgent"` and check the parse.
-3. **DMs first, then the group** — add the bot to the family group and run
+4. **DMs first, then the group** — add the bot to the family group and run
    `/here` only once DMs feel right.
-4. **Tune the group prefilter** (`looksActionable`) against real messages.
+5. **Tune the group prefilter** (`looksActionable`) against real messages.
 
 ## Not built, deliberately
 

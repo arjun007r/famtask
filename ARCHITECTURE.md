@@ -159,6 +159,24 @@ Both use strict-schema tool calls with `tool_choice: auto` (the system prompt
 names the tool), which keeps them compatible with adaptive thinking. Model
 defaults to `claude-opus-5`, overridable via the `CLAUDE_MODEL` var.
 
+### When the agent is unavailable
+
+`structuredCall` throws `AgentUnavailableError` when the API cannot be
+reached at all — no credit, bad key, rate limit, upstream down — as distinct
+from returning null, which means the model ran and had nothing to say.
+Callers must not let it propagate: a retry cannot fix billing, and throwing
+out of the webhook handler makes Telegram redeliver the same update forever.
+
+- **Inbound message**: caught in `app.ts`. A DM gets one plain sentence
+  naming the cause; the group stays silent rather than showing the family a
+  billing error. Slash commands keep working throughout.
+- **Digest**: the deterministic ranking already stands alone, so the digest
+  is sent in ranked order minus the intro line.
+
+The cause is classified on `status` and message text, not `instanceof` — the
+billing failure is a 400 with no error class of its own, and `instanceof`
+stops matching if two copies of the SDK end up in the tree.
+
 Matching an update to an existing task is *not* a model call — it is
 deterministic word overlap in `inbox.ts:matchTask`. The agent already named
 its target; a second model call would be slower and no more reliable on

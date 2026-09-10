@@ -27,7 +27,10 @@ import { answerQuery } from '../src/core/services/queries.ts';
 import { sanitize } from '../src/agents/digest-writer.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
-import { looksActionable } from '../src/app.ts';
+import { handleInboundMessage, looksActionable, type AppDeps } from '../src/app.ts';
+import { describeAgentFailure } from '../src/agents/client.ts';
+import type Anthropic from '@anthropic-ai/sdk';
+import type { MessagingChannel, OutboundMessage } from '../src/channel/types.ts';
 import type { FamilyMember, TaskView } from '../src/core/types.ts';
 
 async function setup() {
@@ -510,5 +513,96 @@ describe('member matching', () => {
     assert.equal(matchMemberByName(members, 'priya')?.id, 'm1');
     assert.equal(matchMemberByName(members, '@Arjun')?.id, 'm2');
     assert.equal(matchMemberByName(members, 'nobody'), null);
+  });
+});
+
+
+describe('agent outage', () => {
+  /** Reproduces a real run: a valid key on an account with no credit. The
+   *  API returns 400 with a billing message, not a dedicated error class. */
+  const billingError = Object.assign(
+    new Error(
+      '400 {"type":"error","error":{"type":"invalid_request_error",' +
+        '"message":"Your credit balance is too low to access the Anthropic API."}}',
+    ),
+    { status: 400 },
+  );
+
+  function stubClient(err: unknown): Anthropic {
+    return { messages: { create: async () => { throw err; } } } as unknown as Anthropic;
+  }
+
+  function recorder(): { channel: MessagingChannel; sent: OutboundMessage[] } {
+    const sent: OutboundMessage[] = [];
+    return {
+      sent,
+      channel: {
+        async send(message) { sent.push(message); },
+        async acknowledge() {},
+      },
+    };
+  }
+
+  it('names the cause instead of leaking the raw API error', () => {
+    assert.match(describeAgentFailure(billingError), /out of credit/);
+    assert.match(describeAgentFailure(new Error('boom')), /unknown reason/);
+  });
+
+  it('answers the DM and does not throw, so Telegram stops retrying', async () => {
+    const env = await setup();
+    const { channel, sent } = recorder();
+    const deps: AppDeps = { db: env.db, channel, anthropic: stubClient(billingError) };
+
+    await handleInboundMessage(deps, {
+      chatId: '1001',
+      chatType: 'dm',
+      userId: '1001',
+      userDisplayName: 'Arjun',
+      text: 'book the dentist for friday please',
+      messageId: 'm1',
+      addressedToBot: true,
+    });
+
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!.text, /out of credit/);
+    assert.match(sent[0]!.text, /Nothing was saved/);
+    assert.equal((await queryTasks(env.db, { familyId: env.familyId })).length, 0);
+  });
+
+  it('stays silent in the group rather than shouting billing errors', async () => {
+    const env = await setup();
+    const { channel, sent } = recorder();
+    const deps: AppDeps = { db: env.db, channel, anthropic: stubClient(billingError) };
+
+    await handleInboundMessage(deps, {
+      chatId: '-500',
+      chatType: 'group',
+      userId: '1002',
+      userDisplayName: 'Priya',
+      text: 'can you please book the dentist tomorrow',
+      messageId: 'm2',
+      addressedToBot: true,
+    });
+
+    assert.deepEqual(sent, []);
+  });
+
+  it('still serves slash commands with the agent down', async () => {
+    const env = await setup();
+    const { channel, sent } = recorder();
+    const deps: AppDeps = { db: env.db, channel, anthropic: stubClient(billingError) };
+
+    await handleInboundMessage(deps, {
+      chatId: '1001',
+      chatType: 'dm',
+      userId: '1001',
+      userDisplayName: 'Arjun',
+      text: '/add Renew the car insurance',
+      messageId: 'm3',
+      addressedToBot: true,
+    });
+
+    assert.match(sent[0]!.text, /Renew the car insurance/);
+    assert.equal((await queryTasks(env.db, { familyId: env.familyId })).length, 1);
   });
 });
