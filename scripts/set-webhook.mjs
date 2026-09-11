@@ -17,6 +17,17 @@ const arg = process.argv[2];
 
 if (!token) fail('Set TELEGRAM_BOT_TOKEN.');
 
+// A BotFather token is "<digits>:<mixed string>". The most common mistake is
+// passing something else entirely -- the webhook secret, say -- which the API
+// answers with a bare 404 that explains nothing.
+if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) {
+  fail(
+    'TELEGRAM_BOT_TOKEN does not look like a BotFather token.\n' +
+      'Expected <digits>:<letters>, e.g. 8123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw\n' +
+      'Get it from BotFather: /mybots -> your bot -> API Token.',
+  );
+}
+
 const call = async (method, body) => {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
@@ -24,7 +35,12 @@ const call = async (method, body) => {
     body: JSON.stringify(body ?? {}),
   });
   const json = await res.json();
-  if (!json.ok) fail(`${method}: ${json.description}`);
+  if (!json.ok) {
+    if (json.error_code === 404) {
+      fail(`${method}: ${json.description} — the bot token is not valid for any bot.`);
+    }
+    fail(`${method}: ${json.description}`);
+  }
   return json.result;
 };
 
@@ -44,6 +60,22 @@ if (arg === '--status') {
 } else {
   if (!arg) fail('Usage: node scripts/set-webhook.mjs <worker origin>');
   if (!secret) fail('Set TELEGRAM_WEBHOOK_SECRET to the same value you gave `wrangler secret put`.');
+  if (secret === token) fail('The webhook secret and the bot token must be different values.');
+  if (!/^https:\/\/[^/]+\.workers\.dev$/.test(arg.replace(/\/$/, '')) && !arg.startsWith('https://')) {
+    fail(`"${arg}" is not an https origin. Use the URL your deploy printed.`);
+  }
+
+  // Reachability first: registering a webhook at a URL that 404s leaves
+  // Telegram silently dropping every update.
+  const health = `${arg.replace(/\/$/, '')}/health`;
+  const probe = await fetch(health).catch(() => null);
+  if (!probe || !probe.ok) {
+    fail(
+      `${health} did not respond.\n` +
+        'Check the URL against what `npm run deploy` printed — the account ' +
+        'subdomain is easy to drop (https://<worker>.<subdomain>.workers.dev).',
+    );
+  }
   const url = `${arg.replace(/\/$/, '')}/telegram/webhook`;
   await call('setWebhook', {
     url,
