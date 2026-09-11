@@ -35,49 +35,50 @@ Without the key, slash commands still work and free text is ignored.
 
 ## Going live
 
-**What I need from you:** a bot token, a Cloudflare account, an Anthropic API
-key, and (later) the family group.
+**What you need:** a bot token from [@BotFather](https://t.me/BotFather), a
+Cloudflare account, and an Anthropic API key with credit on it.
 
-1. **Create the bot.** Message [@BotFather](https://t.me/BotFather) →
-   `/newbot` → note the token and the bot's username. Then `/setprivacy` →
-   **Disable**, so it can read group messages rather than only ones that
-   @-mention it.
+In BotFather: `/newbot`, then `/mybots` → your bot → **Bot Settings** →
+**Group Privacy** → **Turn off**, so it can read group messages rather than
+only ones that @-mention it. (Change this *before* adding it to a group — the
+setting is read when it joins.)
 
-2. **Create the database.**
-   ```bash
-   npx wrangler d1 create famtask     # paste database_id into wrangler.toml
-   npm run db:migrate
-   ```
+Then one command:
 
-3. **Set secrets.**
-   ```bash
-   npx wrangler secret put TELEGRAM_BOT_TOKEN
-   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET   # any random string you invent
-   npx wrangler secret put ANTHROPIC_API_KEY
-   ```
-   Add your bot's username to `[vars]` in `wrangler.toml` as
-   `TELEGRAM_BOT_USERNAME` so group mentions are recognised.
+```bash
+bash scripts/setup.sh
+```
 
-4. **Deploy and register the webhook.**
-   ```bash
-   npm run deploy
-   TELEGRAM_BOT_TOKEN=<token> TELEGRAM_WEBHOOK_SECRET=<same secret as step 3> \
-     node scripts/set-webhook.mjs https://famtask.<subdomain>.workers.dev
-   ```
-   `node scripts/set-webhook.mjs --status` shows what is registered, the
-   bot's username, and Telegram's last delivery error — the first place to
-   look if the bot goes quiet.
+It creates the D1 database and writes the id into `wrangler.toml`, applies
+migrations, prompts for the two secrets without echoing them, generates the
+webhook secret itself, deploys, and registers the webhook. Safe to re-run —
+it skips whatever is already done.
 
-5. **Bootstrap the family.** DM the bot. The first person to do so becomes
-   the first member. Add the second:
-   ```
-   /adduser <their telegram id> <name>
-   ```
-   They get their id by messaging the bot before being added.
+Prefer to do it by hand? The steps are: `wrangler d1 create famtask` (paste
+the id into `wrangler.toml`), `npm run db:migrate`, `wrangler secret put`
+for `TELEGRAM_BOT_TOKEN` / `ANTHROPIC_API_KEY` / `TELEGRAM_WEBHOOK_SECRET`,
+`npm run deploy`, then:
 
-6. **Add the group, once DMs feel right.** Add the bot to the family group;
-   it registers the chat automatically. If it does not, run `/here` inside
-   the group.
+```bash
+TELEGRAM_BOT_TOKEN=<token> TELEGRAM_WEBHOOK_SECRET=<same secret> \
+  node scripts/set-webhook.mjs https://famtask.<subdomain>.workers.dev
+```
+
+### First run
+
+DM the bot — **the first person to do so becomes the first family member**.
+Add the second person with `/adduser <their telegram id> <name>`; they get
+their id by messaging the bot first.
+
+Start with DMs. Add the bot to the family group only once that feels right;
+it registers the group automatically, or run `/here` inside it.
+
+### If the bot goes quiet
+
+```bash
+TELEGRAM_BOT_TOKEN=<token> node scripts/set-webhook.mjs --status   # last delivery error
+npx wrangler tail                                                  # live logs
+```
 
 ## Commands
 

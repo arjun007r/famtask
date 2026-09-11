@@ -15,3 +15,5 @@ crons = ["0 * * * *"]
 
 [vars]
 CLAUDE_MODEL = "claude-opus-5"
+# Without this the bot cannot tell it was @-mentioned in a group.
+TELEGRAM_BOT_USERNAME = "Rajafamtaskbot"
