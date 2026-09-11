@@ -30,6 +30,7 @@ import { buildDigest, localHour, membersDueNow, recordDigestSends } from '../src
 import { applyParsed, matchTask, type InboxContext } from '../src/core/services/inbox.ts';
 import { answerQuery } from '../src/core/services/queries.ts';
 import { sanitize } from '../src/agents/digest-writer.ts';
+import { TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
 import { handleInboundMessage, looksActionable, type AppDeps } from '../src/app.ts';
@@ -777,5 +778,51 @@ describe('agent outage', () => {
 
     assert.match(sent[0]!.text, /Renew the car insurance/);
     assert.equal((await queryTasks(env.db, { familyId: env.familyId })).length, 1);
+  });
+});
+
+
+describe('strict tool schema', () => {
+  /**
+   * Two rules, both learned the hard way against the live API:
+   * a property missing from `required` is never emitted at all, and a JSON
+   * Schema type array is rejected with a 400. Neither shows up in a unit
+   * test of the parser, so assert the schema shape directly.
+   */
+  function walk(node: unknown, path: string, check: (o: any, p: string) => void): void {
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (obj['type'] === 'object') check(obj, path);
+    if (Array.isArray(obj['type'])) {
+      assert.fail(`${path}: type arrays are rejected by strict tool use — use anyOf`);
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      if (Array.isArray(value)) value.forEach((v, i) => walk(v, `${path}.${key}[${i}]`, check));
+      else walk(value, `${path}.${key}`, check);
+    }
+  }
+
+  it('requires every property of every object', () => {
+    walk(TOOL_SCHEMA, 'root', (obj, path) => {
+      const props = Object.keys((obj.properties ?? {}) as object);
+      const required = (obj.required ?? []) as string[];
+      const missing = props.filter((p) => !required.includes(p));
+      assert.deepEqual(missing, [], `${path}: properties missing from required`);
+      assert.equal(obj.additionalProperties, false, `${path}: needs additionalProperties:false`);
+    });
+  });
+
+  it('uses no type arrays anywhere', () => {
+    walk(TOOL_SCHEMA, 'root', () => {});
+  });
+
+  it('still covers every field the engine reads', () => {
+    const props = Object.keys(TOOL_SCHEMA.properties as object);
+    for (const field of [
+      'intent', 'confidence', 'tasks', 'target_task_hint',
+      'new_state', 'new_due_date', 'new_assignee', 'comment', 'query',
+    ]) {
+      assert.ok(props.includes(field), `schema lost ${field}`);
+    }
   });
 });

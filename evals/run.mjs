@@ -24,14 +24,20 @@ import { parseMessage } from '../src/agents/parser.ts';
 const TODAY = '2026-09-11';
 const MEMBERS = ['Arjun', 'Priya'];
 const LISTS = ['Family', 'Business'];
+// Context the update, query and clarification cases refer to.
+//
+// IMPORTANT when adding cases: no new_task case may describe something
+// already in this list. If it does, reading it as an update to the existing
+// task is the *correct* answer, and grading it as new_task marks a right
+// answer wrong. That flaw cost a whole eval run.
 const OPEN_TASKS = [
   'Book dentist appointment [Family] — Priya',
   'Renew car insurance [Family] — Arjun',
-  'HVAC cleaning appointment [Family] — Arjun',
+  'Gutter cleaning appointment [Family] — Arjun',
   'Book the car service [Family] — Arjun',
   'Call the plumber about the leak [Family] — Priya',
   'Sort out the recycling collection [Family] — group',
-  'Sort out the loft [Family] — Arjun',
+  'Clear out the loft [Family] — Arjun',
   'File the quarterly return [Business] — Arjun',
 ];
 
@@ -158,6 +164,8 @@ for (const c of cases) {
     const { intentOk, fails } = grade(c, parsed);
     results.push({ id: c.id, rep, intentOk, fails, parsed });
     process.stdout.write(fails.length === 0 ? '.' : intentOk ? '~' : 'X');
+    // Flush every case: a run interrupted at case 30 should not lose 29.
+    writeFileSync(new URL('results.json', import.meta.url), JSON.stringify({ results }, null, 2));
   }
 }
 process.stdout.write('\n\n');

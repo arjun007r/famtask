@@ -46,7 +46,13 @@ unreachable.
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec.
 
-**Not yet measured:** parse quality. `npm run eval` (32 cases) exists and the
+**Measured once, then fixed:** the first eval run scored 0.78 intent
+accuracy and 0.28 exact match — caused by a schema bug (optional fields
+were unemittable under `strict: true`) and by eight eval cases that
+duplicated tasks the fixture said already existed. Both fixed; not re-run
+yet.
+
+**Not yet measured:** parse quality after those fixes. `npm run eval` (32 cases) exists and the
 grader is self-tested, but the first full run had not finished at handoff.
 That number is the main open question — see Next.
 

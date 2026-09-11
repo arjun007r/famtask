@@ -137,6 +137,25 @@ then blamed confidence — at 0.90. A confident `new_task` with nothing
 extracted now falls back to the person's own words as the title. If the eval
 shows this recurring, force the tool call instead of `tool_choice: auto`.
 
+### Every extracted field comes back empty
+
+Symptom: intent and confidence arrive, and `tasks`, `priority`, `due_date`,
+`new_state`, `query` are absent on every single message.
+
+Cause: under `strict: true`, a property that is not listed in `required` is
+**never emitted** — the compiled schema does not permit it. Marking fields
+optional by leaving them out of `required` silently produces a two-field
+tool.
+
+Fix: every property goes in `required`, and optional ones are
+`anyOf: [<schema>, {type: 'null'}]`. Type arrays (`type: ["string","null"]`)
+are separately rejected with a 400. A test asserts both rules over the whole
+schema — see `test/engine.test.ts` → "strict tool schema".
+
+Downstream tell: intents drift to whichever value needs no extra fields. In
+the observed run, seven `new_task` messages came back as `comment` because
+`tasks` could not be emitted.
+
 ### `git pull` refuses: local changes to `package-lock.json`
 
 `npm install` rewrote it locally. Nothing you authored:

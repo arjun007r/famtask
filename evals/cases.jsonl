@@ -1,21 +1,21 @@
-{"id":"task-plain","chat":"dm","speaker":"Arjun","text":"book the dentist for friday, it's urgent","expect":{"intent":"new_task","tasks":1,"priority":"high","due_date":"2026-09-11","assignee":"speaker"}}
-{"id":"task-hvac","chat":"dm","speaker":"Arjun","text":"Schedule appt for HVAC cleaning by Sep 30th","expect":{"intent":"new_task","tasks":1,"due_date":"2026-09-30","assignee":"speaker"},"note":"Live failure: came back new_task with an empty tasks array."}
+{"id":"task-plain","chat":"dm","speaker":"Arjun","text":"book a haircut for friday, it's urgent","expect":{"intent":"new_task","tasks":1,"priority":"high","due_date":"2026-09-11","assignee":"speaker"}}
+{"id":"task-hvac","chat":"dm","speaker":"Arjun","text":"Schedule appt for HVAC cleaning by Sep 30th","expect":{"intent":"new_task","tasks":1,"due_date":"2026-09-30","assignee":"speaker"},"note":"Live failure: returned new_task with an empty tasks array."}
 {"id":"task-hulu","chat":"dm","speaker":"Arjun","text":"Cancel Hulu subscription by September 15 which is very very important","expect":{"intent":"new_task","tasks":1,"priority":"high","due_date":"2026-09-15"}}
-{"id":"task-for-other","chat":"dm","speaker":"Arjun","text":"priya can you renew the car insurance before it lapses","expect":{"intent":"new_task","tasks":1,"assignee":"Priya"}}
+{"id":"task-for-other","chat":"dm","speaker":"Arjun","text":"priya can you sort out the passport renewal before we travel","expect":{"intent":"new_task","tasks":1,"assignee":"Priya"}}
 {"id":"task-for-other-group","chat":"group","speaker":"Priya","text":"Arjun please pick up the parcel from the post office tomorrow","expect":{"intent":"new_task","tasks":1,"assignee":"Arjun","due_date":"2026-09-12"}}
-{"id":"task-group-open","chat":"group","speaker":"Arjun","text":"someone needs to sort out the recycling collection this week","expect":{"intent":"new_task","tasks":1,"assignee":"group"}}
-{"id":"task-two-in-one","chat":"dm","speaker":"Priya","text":"need to book the car service and also call the plumber about the leak","expect":{"intent":"new_task","tasks":2}}
-{"id":"task-with-list","chat":"dm","speaker":"Arjun","text":"add to my business list: file the quarterly return","expect":{"intent":"new_task","tasks":1,"list":"Business"}}
-{"id":"task-no-rush","chat":"dm","speaker":"Arjun","text":"at some point we should sort out the loft, no rush","expect":{"intent":"new_task","tasks":1,"priority":"low"}}
-{"id":"task-implicit","chat":"group","speaker":"Priya","text":"the car tax runs out at the end of the month and nobody has renewed it","expect":{"intent":"new_task","tasks":1}}
+{"id":"task-group-open","chat":"group","speaker":"Arjun","text":"someone needs to take the old mattress to the tip this week","expect":{"intent":"new_task","tasks":1,"assignee":"group"}}
+{"id":"task-two-in-one","chat":"dm","speaker":"Priya","text":"need to book the window cleaner and also order more dog food","expect":{"intent":"new_task","tasks":2}}
+{"id":"task-with-list","chat":"dm","speaker":"Arjun","text":"add to my business list: renew the domain name","expect":{"intent":"new_task","tasks":1,"list":"Business"}}
+{"id":"task-no-rush","chat":"dm","speaker":"Arjun","text":"at some point we should repaint the hallway, no rush","expect":{"intent":"new_task","tasks":1,"priority":"low"}}
+{"id":"task-implicit","chat":"group","speaker":"Priya","text":"the TV licence runs out at the end of the month and nobody has renewed it","expect":{"intent":"new_task","tasks":1}}
 {"id":"status-done","chat":"dm","speaker":"Priya","text":"dentist is booked, all done","expect":{"intent":"status_update","new_state":"done","hint":true}}
 {"id":"status-started","chat":"dm","speaker":"Arjun","text":"started on the insurance renewal this morning","expect":{"intent":"status_update","new_state":"in_progress","hint":true}}
 {"id":"status-blocked","chat":"dm","speaker":"Priya","text":"stuck on the car insurance, I don't have the policy number","expect":{"intent":"status_update","new_state":"blocked","hint":true}}
 {"id":"status-needs-clarification","chat":"dm","speaker":"Priya","text":"which dentist did you mean, the one on the high street?","expect":{"intent":"clarification","hint":true}}
-{"id":"status-cancelled","chat":"dm","speaker":"Arjun","text":"forget the loft thing, we're not doing it","expect":{"intent":"status_update","new_state":"cancelled","hint":true}}
+{"id":"status-cancelled","chat":"dm","speaker":"Arjun","text":"forget the loft clear-out, we're not doing it","expect":{"intent":"status_update","new_state":"cancelled","hint":true}}
 {"id":"reassign","chat":"group","speaker":"Arjun","text":"priya can you take over the car service booking, I'm swamped","expect":{"intent":"reassignment","new_assignee":"Priya","hint":true}}
 {"id":"reassign-to-group","chat":"group","speaker":"Priya","text":"I can't do the recycling one, someone else grab it","expect":{"intent":"reassignment","new_assignee":"group","hint":true}}
-{"id":"due-move","chat":"dm","speaker":"Arjun","text":"push the HVAC one to the 30th","expect":{"intent":"comment","new_due_date":"2026-09-30","hint":true,"intent_alt":["status_update"]}}
+{"id":"due-move","chat":"dm","speaker":"Arjun","text":"push the gutter cleaning one to the 30th","expect":{"intent":"comment","new_due_date":"2026-09-30","hint":true,"intent_alt":["status_update"]}}
 {"id":"due-move-relative","chat":"dm","speaker":"Priya","text":"move the dentist appointment to next monday","expect":{"intent":"comment","new_due_date":"2026-09-14","hint":true,"intent_alt":["status_update"]}}
 {"id":"comment-context","chat":"dm","speaker":"Priya","text":"on the plumber thing — he said he can only do mornings","expect":{"intent":"comment","hint":true}}
 {"id":"query-mine","chat":"dm","speaker":"Arjun","text":"what are my tasks","expect":{"intent":"query","scope":"mine"}}
@@ -28,5 +28,5 @@
 {"id":"chat-thanks","chat":"dm","speaker":"Priya","text":"thanks for sorting that out earlier, appreciate it","expect":{"intent":"chitchat"}}
 {"id":"chat-opinion","chat":"group","speaker":"Arjun","text":"that restaurant was much better than the one we tried last month","expect":{"intent":"chitchat"}}
 {"id":"chat-question","chat":"group","speaker":"Priya","text":"did you see whether it's supposed to rain tomorrow?","expect":{"intent":"chitchat"}}
-{"id":"chat-past-tense","chat":"group","speaker":"Arjun","text":"I already paid the water bill last week so that's sorted","expect":{"intent":"chitchat","intent_alt":["status_update"]},"note":"Past-tense with no open task; must not become a new task."}
+{"id":"chat-past-tense","chat":"group","speaker":"Arjun","text":"I already paid the water bill last week so that's sorted","expect":{"intent":"chitchat","intent_alt":["status_update"]},"note":"Past tense, no matching open task; must not become a new task."}
 {"id":"chat-hypothetical","chat":"group","speaker":"Priya","text":"if we ever move house we'd need to redo all of this","expect":{"intent":"chitchat"}}

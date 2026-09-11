@@ -60,10 +60,64 @@ export interface ParseContext {
   today: string;
 }
 
-const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
+/**
+ * Under `strict: true` a property that is not in `required` is never emitted
+ * — the compiled schema simply does not allow it. So every property is
+ * required, and "optional" is expressed as anyOf-with-null. Type arrays
+ * (`type: ["string", "null"]`) are rejected outright; anyOf is the union
+ * mechanism strict tool use supports.
+ */
+const nullable = (schema: Record<string, unknown>, description: string) => ({
+  anyOf: [schema, { type: 'null' }],
+  description,
+});
+
+const TASK_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['intent', 'confidence'],
+  required: ['title', 'description', 'list', 'assignee', 'priority', 'due_date'],
+  properties: {
+    title: { type: 'string', description: 'Short imperative title.' },
+    description: nullable({ type: 'string' }, 'Extra detail, or null.'),
+    list: nullable(
+      { type: 'string' },
+      'An existing list name if one clearly fits, otherwise a new one, or null if unsure.',
+    ),
+    assignee: nullable(
+      { type: 'string' },
+      'A family member name, or "group" if it is for whoever picks it up, or null if unclear.',
+    ),
+    priority: nullable({ type: 'string', enum: ['high', 'medium', 'low'] }, 'Or null.'),
+    due_date: nullable({ type: 'string' }, 'YYYY-MM-DD resolved from today, or null.'),
+  },
+};
+
+const QUERY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['scope', 'member', 'list', 'search'],
+  properties: {
+    scope: { type: 'string', enum: ['mine', 'member', 'list', 'unclaimed', 'next'] },
+    member: nullable({ type: 'string' }, 'Whose tasks, for scope=member.'),
+    list: nullable({ type: 'string' }, 'Which list, for scope=list.'),
+    search: nullable({ type: 'string' }, 'Words to filter by, or null.'),
+  },
+};
+
+export const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'intent',
+    'confidence',
+    'tasks',
+    'target_task_hint',
+    'new_state',
+    'new_due_date',
+    'new_assignee',
+    'comment',
+    'query',
+  ],
   properties: {
     intent: {
       type: 'string',
@@ -78,68 +132,38 @@ const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
       ],
       description: 'What this message is doing.',
     },
-    tasks: {
-      type: 'array',
-      description:
-        'Tasks to create. Required whenever intent is new_task — at least one entry, never empty.',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['title'],
-        properties: {
-          title: { type: 'string', description: 'Short imperative title.' },
-          description: { type: 'string', description: 'Extra detail. Omit if none.' },
-          list: {
-            type: 'string',
-            description: 'Existing list name if one clearly fits, else a new one. Omit if unsure.',
-          },
-          assignee: {
-            type: 'string',
-            description:
-              'Family member name, or "group" if it is for whoever picks it up. Omit if unclear.',
-          },
-          priority: { type: 'string', enum: ['high', 'medium', 'low'] },
-          due_date: { type: 'string', description: 'YYYY-MM-DD, resolved from today. Omit if none.' },
-        },
-      },
-    },
-    target_task_hint: {
-      type: 'string',
-      description: 'Words identifying the existing task being updated or discussed.',
-    },
-    new_state: {
-      type: 'string',
-      enum: ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled'],
-    },
-    new_due_date: {
-      type: 'string',
-      description:
-        "YYYY-MM-DD. Set when the message changes an existing task's deadline " +
-        '("push it to Friday", "move the HVAC one to next week").',
-    },
-    new_assignee: {
-      type: 'string',
-      description: 'Member name, "group", or "unassigned". Only for intent=reassignment.',
-    },
-    comment: {
-      type: 'string',
-      description: 'Text to append to the task thread, for comment/clarification/status updates.',
-    },
-    query: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['scope'],
-      properties: {
-        scope: { type: 'string', enum: ['mine', 'member', 'list', 'unclaimed', 'next'] },
-        member: { type: 'string' },
-        list: { type: 'string' },
-        search: { type: 'string' },
-      },
-    },
     confidence: {
       type: 'number',
       description: '0 to 1. Below 0.5 the caller ignores the message.',
     },
+    tasks: nullable(
+      { type: 'array', items: TASK_SCHEMA },
+      'Tasks to create. Required when intent is new_task — at least one, never empty. Null otherwise.',
+    ),
+    target_task_hint: nullable(
+      { type: 'string' },
+      'Words identifying the existing task being updated or discussed, or null.',
+    ),
+    new_state: nullable(
+      {
+        type: 'string',
+        enum: ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled'],
+      },
+      'The state the message moves an existing task to, or null.',
+    ),
+    new_due_date: nullable(
+      { type: 'string' },
+      'YYYY-MM-DD when the message moves an existing task\'s deadline, or null.',
+    ),
+    new_assignee: nullable(
+      { type: 'string' },
+      'Member name, "group", or "unassigned". Only for intent=reassignment. Null otherwise.',
+    ),
+    comment: nullable(
+      { type: 'string' },
+      'Text to append to the task thread, or null.',
+    ),
+    query: nullable(QUERY_SCHEMA, 'Only for intent=query. Null otherwise.'),
   },
 };
 
