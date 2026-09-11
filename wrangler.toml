@@ -1,6 +1,6 @@
 name = "famtask"
 main = "src/worker.ts"
-compatibility_date = "2025-01-15"
+compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]

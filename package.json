@@ -13,10 +13,10 @@
     "db:migrate": "wrangler d1 migrations apply famtask --remote"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
+    "@cloudflare/workers-types": "^5.20260910.1",
     "@types/node": "^26.5.0",
     "typescript": "^5.7.2",
-    "wrangler": "^3.99.0"
+    "wrangler": "^4.131.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0"
