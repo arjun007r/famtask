@@ -10,8 +10,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+STATE_FILE=".famtask-setup"
+
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
-fail() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
+fail() {
+  printf '\n\033[31m%s\033[0m\n' "$*" >&2
+  [ -f "$STATE_FILE" ] && printf 'Progress so far is in %s — re-run this script to continue.\n' "$STATE_FILE" >&2
+  exit 1
+}
+
+# The generated webhook secret has to survive a failure part-way through:
+# it is stored in Cloudflare and must match what Telegram sends, so losing
+# it means neither value can be reproduced. Kept out of git.
+remember() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; chmod 600 "$STATE_FILE"; }
 
 # --- prerequisites ---------------------------------------------------------
 
@@ -71,11 +82,16 @@ read -rs ANTHROPIC_API_KEY; echo
 
 # Generated rather than chosen: this value must match in two places, and a
 # typo there produces silent 403s with nothing pointing at the cause.
-WEBHOOK_SECRET=$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')
+# Reused if an earlier run already generated one.
+WEBHOOK_SECRET=$(grep -E '^TELEGRAM_WEBHOOK_SECRET=' "$STATE_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+if [ -z "$WEBHOOK_SECRET" ]; then
+  WEBHOOK_SECRET=$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')
+  remember TELEGRAM_WEBHOOK_SECRET "$WEBHOOK_SECRET"
+fi
 
-echo "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
-echo "$ANTHROPIC_API_KEY"  | npx wrangler secret put ANTHROPIC_API_KEY
-echo "$WEBHOOK_SECRET"     | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
+printf '%s' "$ANTHROPIC_API_KEY"  | npx wrangler secret put ANTHROPIC_API_KEY
+printf '%s' "$WEBHOOK_SECRET"     | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 
 # --- deploy ----------------------------------------------------------------
 
@@ -88,6 +104,12 @@ if [ -z "$WORKER_URL" ]; then
   printf '\nCould not read the Worker URL from the output. Paste it here: '
   read -r WORKER_URL
 fi
+remember WORKER_URL "$WORKER_URL"
+
+say "Checking the Worker is up"
+curl -fsS "$WORKER_URL/health" >/dev/null \
+  && echo "$WORKER_URL/health responded." \
+  || echo "Health check failed — the webhook step below may not stick."
 
 say "Pointing Telegram at $WORKER_URL"
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" TELEGRAM_WEBHOOK_SECRET="$WEBHOOK_SECRET" \
@@ -95,6 +117,11 @@ TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" TELEGRAM_WEBHOOK_SECRET="$WEBHOOK_SECRE
 
 say "Done."
 cat <<EOF
+
+Worker:         $WORKER_URL
+Webhook secret: $WEBHOOK_SECRET
+  (also in $STATE_FILE, gitignored — needed to re-register the webhook)
+
 
 Next:
   1. DM your bot on Telegram and say hello.
