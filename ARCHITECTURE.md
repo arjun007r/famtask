@@ -90,6 +90,33 @@ the whole point of the app. `done` and `cancelled` are closed (excluded from
 digests and "my tasks") but reopenable, so nothing is ever truly stuck.
 `done → blocked` is rejected; reopen first.
 
+## Due dates, urgency and ownership
+
+`due_at` drives urgency, and both derived values come from it rather than
+being stored:
+
+- `timingOf()` → `overdue` | `due-soon` (within 2 days) | `upcoming` | `none`
+- `effectivePriority()` → `high` whenever timing is overdue or due-soon,
+  otherwise the stored priority
+
+Nothing sweeps a flag and nothing goes stale, and moving the deadline out
+de-escalates the task by itself — which is the whole recovery path for an
+overdue item. Messages move deadlines through the parser's `new_due_date`
+("push the HVAC one to the 30th"), so it works from a phone without a
+command. Closed tasks have no timing.
+
+Calendar days are compared in UTC, not timestamps: a task due at midnight
+today must not read as overdue by mid-morning.
+
+**A task with no named owner belongs to whoever raised it.** Unassigned
+reads as a fault to the person who just wrote it down, and someone has to
+hold a task until it is explicitly handed over or thrown open with
+"group"/"anyone". Only an explicit hand-off produces a group or unassigned
+task.
+
+`created_by` and `created_at` — the reporter and when they raised it — are
+shown on the task detail card.
+
 ## Priority and ranking
 
 `src/core/priority.ts` computes a deterministic score: explicit priority

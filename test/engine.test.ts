@@ -3,7 +3,12 @@ import { describe, it, beforeEach } from 'node:test';
 import { memoryDb } from '../src/core/db/sqlite.ts';
 import type { Db } from '../src/core/db/adapter.ts';
 import { canTransition, isClosed } from '../src/core/state-machine.ts';
-import { rankScore, inferPriorityFromText } from '../src/core/priority.ts';
+import {
+  rankScore,
+  inferPriorityFromText,
+  effectivePriority,
+  timingOf,
+} from '../src/core/priority.ts';
 import { addMember, ensureFamily, matchMemberByName } from '../src/core/services/registry.ts';
 import {
   createList,
@@ -104,6 +109,38 @@ describe('priority', () => {
     assert.equal(inferPriorityFromText('cancel Hulu, very very important'), 'high');
     assert.equal(inferPriorityFromText('this is important'), 'high');
     assert.equal(inferPriorityFromText('it is not important'), null);
+  });
+});
+
+describe('due dates drive urgency', () => {
+  const NOW = new Date('2026-09-11T14:00:00Z');
+  const task = (due: string | null, priority = 'low', state = 'todo') =>
+    ({ due_at: due, priority, state }) as Parameters<typeof effectivePriority>[0];
+
+  it('does not call a task due today overdue', () => {
+    // Comparing timestamps rather than calendar days would flip this to
+    // "overdue" by mid-morning on the day it is due.
+    assert.equal(timingOf(task('2026-09-11T00:00:00Z'), NOW), 'due-soon');
+  });
+
+  it('escalates inside two days and reports overdue after', () => {
+    assert.equal(timingOf(task('2026-09-13T00:00:00Z'), NOW), 'due-soon');
+    assert.equal(timingOf(task('2026-09-20T00:00:00Z'), NOW), 'upcoming');
+    assert.equal(timingOf(task('2026-09-09T00:00:00Z'), NOW), 'overdue');
+
+    assert.equal(effectivePriority(task('2026-09-12T00:00:00Z'), NOW), 'high');
+    assert.equal(effectivePriority(task('2026-09-09T00:00:00Z'), NOW), 'high');
+    assert.equal(effectivePriority(task('2026-09-30T00:00:00Z'), NOW), 'low');
+  });
+
+  it('drops back when the date moves out — no second write', () => {
+    assert.equal(effectivePriority(task('2026-09-09T00:00:00Z'), NOW), 'high');
+    assert.equal(effectivePriority(task('2026-10-09T00:00:00Z'), NOW), 'low');
+  });
+
+  it('ignores the deadline once the task is closed', () => {
+    assert.equal(timingOf(task('2026-09-01T00:00:00Z', 'low', 'done'), NOW), 'none');
+    assert.equal(effectivePriority(task('2026-09-01T00:00:00Z', 'low', 'done'), NOW), 'low');
   });
 });
 
@@ -421,6 +458,41 @@ describe('inbox', () => {
       tasks: [{ title: 'Call the plumber', assignee: 'me' }],
     });
     assert.deepEqual(result.notify, []);
+  });
+
+  it('moves a deadline on an existing task instead of creating one', async () => {
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'HVAC cleaning appointment',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      dueAt: '2026-09-09T00:00:00.000Z',
+    });
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'push the HVAC one to the 30th');
+    const result = await applyParsed(env.db, ctx, {
+      intent: 'comment',
+      confidence: 0.9,
+      target_task_hint: 'HVAC cleaning',
+      new_due_date: '2026-09-30',
+    });
+    const tasks = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(tasks.length, 1, 'moving a date must not create a second task');
+    assert.equal(tasks[0]!.due_at, '2026-09-30T00:00:00.000Z');
+    assert.match(result.reply!.text, /2026-09-30/);
+  });
+
+  it('gives a task with no named owner to whoever raised it', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'group', 'we need to book the car service');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Book the car service' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.assigned_to, env.arjun.id, 'unassigned reads as a bug to the author');
+    assert.equal(task!.assignee_kind, 'member');
   });
 
   it('answers a query without writing anything', async () => {

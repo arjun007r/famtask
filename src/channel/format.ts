@@ -1,4 +1,5 @@
 import type { Digest } from '../core/services/digest.ts';
+import { effectivePriority, timingOf } from '../core/priority.ts';
 import { stateLabel } from '../core/state-machine.ts';
 import type { TaskEvent, TaskList, TaskView } from '../core/types.ts';
 import type { Button, RenderedMessage } from './types.ts';
@@ -13,11 +14,17 @@ const STATE_MARK: Record<string, string> = {
   cancelled: '✕',
 };
 
-export function taskLine(task: TaskView, index?: number): string {
+export function taskLine(task: TaskView, index?: number, now: Date = new Date()): string {
   const n = index === undefined ? '' : `${index}. `;
   const mark = STATE_MARK[task.state] ?? '○';
-  const pri = PRIORITY_MARK[task.priority] ?? '';
-  const due = task.due_at ? ` (due ${shortDate(task.due_at)})` : '';
+  // Escalated by the deadline, not by whatever was set when it was written.
+  const pri = PRIORITY_MARK[effectivePriority(task, now)] ?? '';
+  const timing = timingOf(task, now);
+  const due = task.due_at
+    ? timing === 'overdue'
+      ? ` (OVERDUE — was due ${shortDate(task.due_at)})`
+      : ` (due ${shortDate(task.due_at)})`
+    : '';
   const owner =
     task.assignee_kind === 'member'
       ? ''
@@ -96,14 +103,28 @@ export function renderTaskDetail(
   task: TaskView,
   thread: TaskEvent[],
   memberNames: Map<string, string>,
+  now: Date = new Date(),
 ): RenderedMessage {
+  const priority = effectivePriority(task, now);
+  const escalated = priority !== task.priority ? ` (raised from ${task.priority})` : '';
   const lines = [
     task.title,
-    `${stateLabel(task.state)} · ${task.priority} · [${task.list_name}]`,
+    `${stateLabel(task.state)} · ${priority}${escalated} · [${task.list_name}]`,
   ];
   if (task.assignee_name) lines.push(`Assigned to ${task.assignee_name}`);
   else lines.push(task.assignee_kind === 'group' ? 'Open to the family' : 'Unassigned');
-  if (task.due_at) lines.push(`Due ${shortDate(task.due_at)}`);
+  if (task.due_at) {
+    const timing = timingOf(task, now);
+    lines.push(
+      timing === 'overdue'
+        ? `Due ${shortDate(task.due_at)} — OVERDUE`
+        : `Due ${shortDate(task.due_at)}`,
+    );
+  }
+  // Who asked for this and when. Both have always been stored; nothing
+  // showed them, so a task read as though it came from nowhere.
+  const reporter = task.created_by ? memberNames.get(task.created_by) : null;
+  lines.push(`Added by ${reporter ?? 'someone'} on ${shortDate(task.created_at)}`);
   if (task.description) lines.push('', task.description);
 
   const comments = thread.filter((e) => e.kind === 'comment' && e.body);

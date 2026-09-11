@@ -36,6 +36,8 @@ export interface ParsedQuery {
 
 export interface ParsedMessage {
   intent: Intent;
+  /** YYYY-MM-DD, when the message moves an existing task's deadline. */
+  new_due_date?: string | null;
   tasks?: ParsedTask[];
   /** Free text naming the task an update refers to; matched by the caller. */
   target_task_hint?: string | null;
@@ -109,6 +111,12 @@ const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
       type: 'string',
       enum: ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled'],
     },
+    new_due_date: {
+      type: 'string',
+      description:
+        "YYYY-MM-DD. Set when the message changes an existing task's deadline " +
+        '("push it to Friday", "move the HVAC one to next week").',
+    },
     new_assignee: {
       type: 'string',
       description: 'Member name, "group", or "unassigned". Only for intent=reassignment.',
@@ -159,6 +167,8 @@ Rules:
 - Only use assignee names from the known family members. Use "group" when the
   message is addressed to everyone or to no one in particular.
 - Resolve relative dates ("tomorrow", "Friday") against today's date.
+- Moving a deadline on an existing task is a status_update or comment with
+  new_due_date set — not a new task.
 - Set priority high only for genuine urgency, not politeness ("please" is not urgent).`;
 
 export async function parseMessage(

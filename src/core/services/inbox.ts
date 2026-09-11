@@ -17,7 +17,15 @@ import { isPriority } from '../types.ts';
 import { allLists, resolveList } from './lists.ts';
 import { answerQuery } from './queries.ts';
 import { listMembers, matchMemberByName } from './registry.ts';
-import { addComment, assign, createTask, getTaskView, queryTasks, setState } from './tasks.ts';
+import {
+  addComment,
+  assign,
+  createTask,
+  editTask,
+  getTaskView,
+  queryTasks,
+  setState,
+} from './tasks.ts';
 
 /** Below this the message is treated as chit-chat. Group chat is noisier, so
  *  it needs a clearer signal before anything is written. */
@@ -165,6 +173,7 @@ async function applyStatusUpdate(
     if (err instanceof UserError) return { reply: { text: err.message }, notify: [] };
     throw err;
   }
+  await applyDueDate(db, ctx, task.id, parsed);
   const fresh = await getTaskView(db, task.id);
   const line = `${stateLabel(to)}: ${fresh.title} [${fresh.list_name}]`;
   const note = parsed.comment ? `\n${parsed.comment}` : '';
@@ -211,14 +220,33 @@ async function applyComment(
   if (parsed.new_state && parsed.new_state !== task.state) {
     await setState(db, task.id, parsed.new_state, ctx.speaker.id);
   }
+  const moved = await applyDueDate(db, ctx, task.id, parsed);
   const fresh = await getTaskView(db, task.id);
   return {
-    reply: { text: `Noted on "${task.title}".` },
+    reply: {
+      text: moved
+        ? `"${fresh.title}" now due ${moved.slice(0, 10)}.`
+        : `Noted on "${task.title}".`,
+    },
     notify: audienceFor(fresh, ctx.speaker.id).map((memberId) => ({
       memberId,
       message: { text: `${ctx.speaker.name} on "${fresh.title}":\n${body}` },
     })),
   };
+}
+
+/** Moving the deadline is what clears an overdue task: priority is derived
+ *  from the due date, so a new date de-escalates it with no second step. */
+async function applyDueDate(
+  db: Db,
+  ctx: InboxContext,
+  taskId: string,
+  parsed: ParsedMessage,
+): Promise<string | null> {
+  const dueAt = normalizeDueDate(parsed.new_due_date);
+  if (!dueAt) return null;
+  await editTask(db, taskId, { dueAt }, ctx.speaker.id);
+  return dueAt;
 }
 
 async function findTarget(
@@ -305,8 +333,10 @@ function resolveAssignee(
 ): { kind: AssigneeKind; memberId: string | null } {
   const name = raw?.trim().toLowerCase();
   if (!name) {
-    // A task raised in a DM with nobody named is the speaker's own.
-    return ctx.chatType === 'dm' && fallback === 'unassigned'
+    // Nobody named means the person who raised it owns it. "Unassigned" reads
+    // as a bug to the person who just wrote the task down, and someone has to
+    // hold it until it is explicitly handed over or thrown open to everyone.
+    return fallback === 'unassigned'
       ? { kind: 'member', memberId: ctx.speaker.id }
       : { kind: fallback, memberId: null };
   }
