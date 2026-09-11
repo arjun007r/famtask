@@ -601,6 +601,72 @@ describe('agent outage', () => {
     assert.deepEqual(sent, []);
   });
 
+  it('never leaves a DM unanswered, even when it decides to do nothing', async () => {
+    const env = await setup();
+    const { channel, sent } = recorder();
+    // A client that succeeds but classifies the message as chit-chat.
+    const chatty = {
+      messages: {
+        create: async () => ({
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'record_message',
+              input: { intent: 'chitchat', confidence: 0.95 },
+            },
+          ],
+        }),
+      },
+    } as unknown as Anthropic;
+
+    await handleInboundMessage(
+      { db: env.db, channel, anthropic: chatty },
+      {
+        chatId: '1001',
+        chatType: 'dm',
+        userId: '1001',
+        userDisplayName: 'Arjun',
+        text: 'haha that is funny',
+        messageId: 'm9',
+        addressedToBot: true,
+      },
+    );
+
+    assert.equal(sent.length, 1, 'a DM must always get an answer');
+    assert.match(sent[0]!.text, /didn't read that as a task/);
+  });
+
+  it('stays quiet on the same message in the group', async () => {
+    const env = await setup();
+    const { channel, sent } = recorder();
+    const chatty = {
+      messages: {
+        create: async () => ({
+          stop_reason: 'tool_use',
+          content: [
+            { type: 'tool_use', name: 'record_message', input: { intent: 'chitchat', confidence: 0.95 } },
+          ],
+        }),
+      },
+    } as unknown as Anthropic;
+
+    await handleInboundMessage(
+      { db: env.db, channel, anthropic: chatty },
+      {
+        chatId: '-500',
+        chatType: 'group',
+        userId: '1002',
+        userDisplayName: 'Priya',
+        text: 'haha that is funny, can you believe it',
+        messageId: 'm10',
+        addressedToBot: true,
+      },
+    );
+
+    assert.deepEqual(sent, [], 'chit-chat in the group is exactly what should be ignored');
+  });
+
   it('still serves slash commands with the agent down', async () => {
     const env = await setup();
     const { channel, sent } = recorder();

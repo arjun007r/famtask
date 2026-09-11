@@ -158,7 +158,18 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
     }
     return;
   }
-  if (!parsed) return;
+  if (!parsed) {
+    // The model answered without calling the tool. Rare, but silence here is
+    // indistinguishable from the bot being down.
+    console.warn('parser returned no structured result', { text: inbound.text.slice(0, 80) });
+    if (inbound.chatType === 'dm') {
+      await reply(deps, inbound, {
+        text: "I couldn't make sense of that. Try /add <what needs doing>, or /help.",
+      });
+    }
+    return;
+  }
+  console.log('parsed', { intent: parsed.intent, confidence: parsed.confidence });
 
   const ctx: InboxContext = {
     familyId: family.id,
@@ -178,8 +189,22 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
     return;
   }
 
-  if (result.reply) await reply(deps, inbound, result.reply);
+  if (result.reply) {
+    await reply(deps, inbound, result.reply);
+  } else if (inbound.chatType === 'dm') {
+    // A DM to a task bot is almost always meant as a task, so saying nothing
+    // reads as a failure. In the group, staying quiet is the whole point.
+    await reply(deps, inbound, { text: noReplyReason(parsed) });
+  }
   await deliver(deps, result.notify, inbound.chatId);
+}
+
+/** Explain a deliberate non-action, so it cannot be mistaken for a fault. */
+function noReplyReason(parsed: { intent: string; confidence: number }): string {
+  if (parsed.intent === 'chitchat') {
+    return "I didn't read that as a task. Use /add <what needs doing> if you want it saved.";
+  }
+  return `I wasn't confident enough about that one (${parsed.confidence.toFixed(2)}). Try /add <what needs doing>, or rephrase it.`;
 }
 
 /** DM people who need to know but are not reading the chat this came from. */

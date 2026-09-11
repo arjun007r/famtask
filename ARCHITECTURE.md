@@ -159,6 +159,19 @@ Both use strict-schema tool calls with `tool_choice: auto` (the system prompt
 names the tool), which keeps them compatible with adaptive thinking. Model
 defaults to `claude-opus-5`, overridable via the `CLAUDE_MODEL` var.
 
+### Never silent in a DM
+
+A DM to a task bot is almost always meant as a task, so saying nothing reads
+as a fault — and during setup it is genuinely indistinguishable from one. So
+every DM gets an answer, including when the engine deliberately does
+nothing: chit-chat, a confidence score below the floor, or a model reply
+that skipped the tool call each produce a short explanation naming the
+reason. The parsed intent and confidence are logged on every message, so
+`wrangler tail` shows why.
+
+In the group the opposite holds: staying quiet on chit-chat is the entire
+point, so nothing is sent there.
+
 ### When the agent is unavailable
 
 `structuredCall` throws `AgentUnavailableError` when the API cannot be
