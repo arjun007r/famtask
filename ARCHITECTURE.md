@@ -188,6 +188,65 @@ Every group message would otherwise cost an API call. `looksActionable()` in
 `app.ts` is a keyword prefilter that lets addressed messages and plausible
 asks through and drops idle chatter. DMs are always parsed.
 
+## Moving to another account
+
+Nothing here is tied to the personal accounts it was first set up under.
+Roughly in order of how much work each piece is.
+
+**GitHub — minutes.** Settings → Transfer ownership moves the repo to an
+org, keeping history, issues and redirects from the old URL. Or just
+`git remote set-url` and push; the history is portable either way.
+
+**Anthropic — minutes.** Issue a key in the new org and swap it:
+
+```bash
+npx wrangler secret put ANTHROPIC_API_KEY
+```
+
+Credit balances do *not* transfer between accounts, so avoid preloading a
+large balance on an account you expect to move off.
+
+**Cloudflare — under an hour.** There is no account transfer for Workers,
+and none is needed: the Worker is this repo plus config. Sign in as the new
+account and redeploy. The only real work is the data.
+
+```bash
+# from the old account
+npx wrangler d1 export famtask --remote --output famtask-backup.sql
+
+# then, signed in as the new account
+npx wrangler login
+npx wrangler d1 create famtask          # put the new id in wrangler.toml
+npx wrangler d1 execute famtask --remote --file=famtask-backup.sql
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put ANTHROPIC_API_KEY
+npm run deploy
+node scripts/set-webhook.mjs <new worker url>    # with the same env vars
+```
+
+The export is worth running periodically regardless — it is the only backup
+of the family's tasks.
+
+**Telegram — the one thing that cannot be transferred.** A BotFather bot
+belongs to the Telegram *user account* that created it, not to an email, and
+there is no hand-off between accounts. A differently-owned bot means a new
+bot, a new token and a new @username.
+
+That is cheaper than it sounds, because of how Telegram ids work. For a
+direct message `chat_id` *is* the user's id, and `telegram_user_id` does not
+change, so the existing `family_members` rows stay valid against a new bot.
+Group chat ids are properties of the group, not the bot, so `group_chat_id`
+survives too. The only manual step is that each member must `/start` the new
+bot once — a bot cannot message someone who has never opened a conversation
+with it — and the bot must be re-added to the family group.
+
+**What makes all of this cheap** is already in place and worth not undoing:
+`family_id` on tasks, lists and members; the `Db` interface, so Postgres
+instead of D1 is an adapter rather than a rewrite; and secrets that have
+never lived in the repo, so there is nothing personal baked into what gets
+transferred.
+
 ## Open decisions
 
 - **Group prefilter tuning.** `looksActionable()` is keyword-based and will

@@ -62,6 +62,15 @@ step 1 below and needs credit on the account.
    `/here` only once DMs feel right.
 5. **Tune the group prefilter** (`looksActionable`) against real messages.
 
+## If this moves to a business account
+
+ARCHITECTURE.md → "Moving to another account" has the commands. Short
+version: GitHub and Anthropic are minutes, Cloudflare is a redeploy plus a
+D1 export/import, and the Telegram bot cannot be transferred between
+Telegram accounts — that means a new bot and everyone running `/start` once.
+
+Run the D1 export periodically anyway; it is the only backup of the tasks.
+
 ## Not built, deliberately
 
 Multi-tenant auth, self-serve onboarding, billing, admin tooling. `family_id`
