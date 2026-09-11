@@ -69,6 +69,15 @@ function errorStatus(err: unknown): number | undefined {
   return typeof raw === 'number' ? raw : undefined;
 }
 
+/**
+ * `output_config.effort` is rejected outright by models that do not support
+ * it — Haiku 4.5 and Sonnet 4.5 — so sending it unconditionally makes
+ * trying a cheaper model fail with a 400 rather than just costing less.
+ */
+export function supportsEffort(model: string): boolean {
+  return !/haiku/i.test(model) && !/sonnet-4-5/i.test(model);
+}
+
 export interface StructuredCallOptions {
   system: string;
   input: string;
@@ -87,12 +96,13 @@ export async function structuredCall<T>(
   client: Anthropic,
   opts: StructuredCallOptions,
 ): Promise<T | null> {
+  const model = opts.model ?? DEFAULT_MODEL;
   let response;
   try {
     response = await client.messages.create({
-      model: opts.model ?? DEFAULT_MODEL,
+      model,
       max_tokens: opts.maxTokens ?? 2048,
-      output_config: { effort: opts.effort ?? 'low' },
+      ...(supportsEffort(model) ? { output_config: { effort: opts.effort ?? 'low' } } : {}),
       system: opts.system,
       tools: [
         {

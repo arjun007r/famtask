@@ -34,7 +34,7 @@ import { TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
 import { handleInboundMessage, looksActionable, type AppDeps } from '../src/app.ts';
-import { describeAgentFailure } from '../src/agents/client.ts';
+import { describeAgentFailure, supportsEffort } from '../src/agents/client.ts';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { MessagingChannel, OutboundMessage } from '../src/channel/types.ts';
 import type { FamilyMember, TaskView } from '../src/core/types.ts';
@@ -824,5 +824,17 @@ describe('strict tool schema', () => {
     ]) {
       assert.ok(props.includes(field), `schema lost ${field}`);
     }
+  });
+});
+
+
+describe('model capability gating', () => {
+  it('omits effort on models that reject it', () => {
+    // Sending output_config.effort to these returns a 400, which would make
+    // "try a cheaper model" fail rather than save money.
+    assert.equal(supportsEffort('claude-haiku-4-5'), false);
+    assert.equal(supportsEffort('claude-sonnet-4-5'), false);
+    assert.equal(supportsEffort('claude-opus-5'), true);
+    assert.equal(supportsEffort('claude-sonnet-5'), true);
   });
 });

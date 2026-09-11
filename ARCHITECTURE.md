@@ -224,9 +224,33 @@ three-word titles.
 
 ## Cost control
 
-Every group message would otherwise cost an API call. `looksActionable()` in
-`app.ts` is a keyword prefilter that lets addressed messages and plausible
-asks through and drops idle chatter. DMs are always parsed.
+Calls avoided entirely:
+
+- **Slash commands** are handled before the agent is ever constructed.
+- **Group chatter** is dropped by `looksActionable()` in `app.ts`, a keyword
+  prefilter — without it every idle group message costs a call. Addressed
+  messages always pass. DMs are always parsed, since a DM to a task bot is
+  almost always meant as one.
+- **Task matching** is word overlap, not a second model call.
+- **Digest ranking** is deterministic; the agent only reorders within the
+  already-chosen five and writes one line, and the digest still sends if it
+  fails.
+
+That leaves roughly one call per free-text DM and per actionable group
+message, plus one per person per day for the digest.
+
+**Model choice is a config change, not a code change:** the `CLAUDE_MODEL`
+var. Parsing is closed-set classification with a strict schema, which is the
+shape a smaller model handles well — so measure before paying for a larger
+one:
+
+```bash
+npm run eval -- --model claude-haiku-4-5
+```
+
+Compare against `evals/baseline.json`. Note that `output_config.effort` is
+rejected by Haiku 4.5 and Sonnet 4.5; `supportsEffort()` omits it for those,
+so swapping the model does not 400.
 
 ## Moving to another account
 
