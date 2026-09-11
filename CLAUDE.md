@@ -1,9 +1,11 @@
 # famtask — working notes
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) first (schema, state machine, list
-and digest behaviour, open decisions) and [PROGRESS.md](PROGRESS.md) second
-(what is built, what is next). They are the source of truth — this
-conversation is not. Keep both current as you go.
+Start with [HANDOFF.md](HANDOFF.md) — what is live, what is verified, what
+is decided, what is next. Then [ARCHITECTURE.md](ARCHITECTURE.md) (schema,
+state machine, digest behaviour, open decisions),
+[PROGRESS.md](PROGRESS.md) (built vs. next), and
+[docs/RUNBOOK.md](docs/RUNBOOK.md) (setup and troubleshooting). They are the
+source of truth — this conversation is not. Keep them current as you go.
 
 ## Rules
 

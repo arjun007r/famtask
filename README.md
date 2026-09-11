@@ -5,9 +5,12 @@ tracked as they bounce between people, and pushed back out as a daily digest
 with one-tap buttons.
 
 Cloudflare Workers + D1 + Cron Triggers, TypeScript, Claude for message
-parsing and digest writing. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
-schema, state machine, and design decisions; [PROGRESS.md](PROGRESS.md) for
-what is built and what is next.
+parsing and digest writing.
+
+- [HANDOFF.md](HANDOFF.md) — current state: what is live, verified, decided, next
+- [ARCHITECTURE.md](ARCHITECTURE.md) — schema, state machine, design decisions
+- [PROGRESS.md](PROGRESS.md) — built vs. next
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — setup, troubleshooting, operations
 
 ## Try it without a bot
 
