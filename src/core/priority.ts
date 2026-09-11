@@ -47,7 +47,12 @@ function daysBetween(from: Date, to: Date): number {
  *  does not set one. */
 export function inferPriorityFromText(text: string): Priority | null {
   const t = text.toLowerCase();
-  if (/\b(urgent|asap|right away|immediately|critical|emergency|today)\b/.test(t)) return 'high';
+  if (/\b(urgent|asap|right away|immediately|critical|emergency|today|high priority)\b/.test(t)) {
+    return 'high';
+  }
+  // "important" is the phrasing people actually reach for; the lookbehind
+  // keeps "not important" out.
+  if (/(?<!\bnot )\bimportant\b/.test(t)) return 'high';
   if (/\b(whenever|no rush|someday|eventually|low priority|if you get a chance)\b/.test(t)) {
     return 'low';
   }

@@ -96,7 +96,13 @@ async function createFromParsed(
   ctx: InboxContext,
   specs: ParsedTask[],
 ): Promise<InboxResult> {
-  if (specs.length === 0) return NOTHING;
+  // The agent said "this is a task" and then extracted none. Dropping the
+  // message would lose work the person clearly asked for, so fall back to
+  // their own words as the title.
+  const effective =
+    specs.length > 0 ? specs : [{ title: ctx.rawText.trim().slice(0, 200) } satisfies ParsedTask];
+  if (!effective[0]?.title) return NOTHING;
+  specs = effective;
   const members = await listMembers(db, ctx.familyId);
   const created: TaskView[] = [];
 

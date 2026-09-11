@@ -23,6 +23,7 @@ import type {
 } from './channel/types.ts';
 import type { Db } from './core/db/adapter.ts';
 import { UserError } from './core/errors.ts';
+import { inferPriorityFromText } from './core/priority.ts';
 import {
   buildDigest,
   buildGroupBoard,
@@ -204,7 +205,12 @@ function noReplyReason(parsed: { intent: string; confidence: number }): string {
   if (parsed.intent === 'chitchat') {
     return "I didn't read that as a task. Use /add <what needs doing> if you want it saved.";
   }
-  return `I wasn't confident enough about that one (${parsed.confidence.toFixed(2)}). Try /add <what needs doing>, or rephrase it.`;
+  if (parsed.confidence < 0.5) {
+    return `I wasn't sure what you meant (${parsed.confidence.toFixed(2)}). Try /add <what needs doing>, or rephrase it.`;
+  }
+  // Understood, but produced nothing to act on. Say so plainly rather than
+  // blaming confidence, which sends people rephrasing a message that was fine.
+  return `I read that as "${parsed.intent}" but couldn't pull anything out of it. Try /add <what needs doing>.`;
 }
 
 /** DM people who need to know but are not reading the chat this came from. */
@@ -427,6 +433,8 @@ async function runCommand(
           createdBy: member.id,
           assigneeKind: 'member',
           assignedTo: member.id,
+          // /add is the no-agent path, but urgency is free to read.
+          priority: inferPriorityFromText(arg) ?? 'medium',
           sourceChatId: inbound.chatId,
           sourceMessageId: inbound.messageId,
         });

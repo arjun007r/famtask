@@ -99,6 +99,12 @@ describe('priority', () => {
     assert.equal(inferPriorityFromText('whenever you get a chance'), 'low');
     assert.equal(inferPriorityFromText('please book it'), null);
   });
+
+  it('treats "important" as urgent, but not "not important"', () => {
+    assert.equal(inferPriorityFromText('cancel Hulu, very very important'), 'high');
+    assert.equal(inferPriorityFromText('this is important'), 'high');
+    assert.equal(inferPriorityFromText('it is not important'), null);
+  });
 });
 
 describe('tasks', () => {
@@ -309,6 +315,21 @@ describe('inbox', () => {
     assert.equal(task!.list_name, 'Business');
     assert.equal(task!.priority, 'high');
     assert.equal(task!.due_at, '2026-09-11T00:00:00.000Z');
+  });
+
+  it('still saves the message when the agent extracts no task from it', async () => {
+    // Observed live: intent new_task at 0.90 confidence with an empty tasks
+    // array. Dropping it loses work the person plainly asked for.
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Schedule appt for HVAC cleaning by Sep 30th');
+    const result = await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [],
+    });
+    assert.ok(result.reply, 'a confident new_task must never vanish');
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.title, 'Schedule appt for HVAC cleaning by Sep 30th');
+    assert.equal(task!.assigned_to, env.arjun.id);
   });
 
   it('leaves a group-addressed task open to the family', async () => {

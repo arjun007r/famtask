@@ -78,7 +78,8 @@ const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
     },
     tasks: {
       type: 'array',
-      description: 'Tasks to create. Only for intent=new_task.',
+      description:
+        'Tasks to create. Required whenever intent is new_task — at least one entry, never empty.',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -147,6 +148,8 @@ Intents:
 - chitchat: everything else. Ordinary conversation, jokes, logistics with no task in it.
 
 Rules:
+- If intent is new_task you MUST fill in tasks with at least one entry. An
+  empty tasks array with intent new_task is never correct.
 - Prefer chitchat when unsure. A missed task is recoverable; a chat log full of
   junk tasks is not. In a group chat especially, only pull out a task when
   someone is clearly asking for something to be done.
