@@ -157,7 +157,9 @@ export const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
     ),
     new_assignee: nullable(
       { type: 'string' },
-      'Member name, "group", or "unassigned". Only for intent=reassignment. Null otherwise.',
+      'A family member name; "group" when it is thrown open to the family for ' +
+        'whoever picks it up ("someone else grab it"); "unassigned" only when it ' +
+        'should explicitly belong to nobody. Only for intent=reassignment, else null.',
     ),
     comment: nullable(
       { type: 'string' },

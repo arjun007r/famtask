@@ -46,13 +46,14 @@ unreachable.
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec.
 
-**Measured once, then fixed:** the first eval run scored 0.78 intent
-accuracy and 0.28 exact match — caused by a schema bug (optional fields
-were unemittable under `strict: true`) and by eight eval cases that
-duplicated tasks the fixture said already existed. Both fixed; not re-run
-yet.
+**Measured:** parse quality. 32-case eval at commit `7210fa1` —
+intent accuracy **1.0**, exact match **0.969**, chit-chat false positives
+**0.0**. Scores and the prior run are in `evals/baseline.json`; compare
+against it after any change to the parser prompt or schema.
 
-**Not yet measured:** parse quality after those fixes. `npm run eval` (32 cases) exists and the
+The one miss is a label, not a behaviour: "someone else grab it" came back
+as `unassigned` rather than `group`, and the two are identical in every
+query. `npm run eval` (32 cases) exists and the
 grader is self-tested, but the first full run had not finished at handoff.
 That number is the main open question — see Next.
 

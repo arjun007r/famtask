@@ -1,0 +1,19 @@
+{
+  "note": "Reference scores to compare a run against. Update deliberately, with the commit that moved them.",
+  "commit": "7210fa1",
+  "model": "claude-opus-5",
+  "cases": 32,
+  "intent_accuracy": 1.0,
+  "exact_match": 0.969,
+  "chitchat_false_positive_rate": 0.0,
+  "actionable_miss_rate": 0.0,
+  "known_miss": "reassign-to-group returned assignee 'unassigned' rather than 'group'; behaviourally identical (both are claimable and appear on the group board), differs only in the label shown.",
+  "history": [
+    {
+      "commit": "8b8e106",
+      "intent_accuracy": 0.781,
+      "exact_match": 0.281,
+      "cause": "Optional fields were absent from `required`, so under strict: true the tool could emit only intent and confidence. Eight new_task cases also duplicated the open-task fixture, making updates the correct read."
+    }
+  ]
+}

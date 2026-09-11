@@ -62,9 +62,9 @@ Anthropic and were rejected at billing (400, empty account) and at auth
 `output_config.effort` were accepted. The failure path is now covered end
 to end.
 
-**Still unverified: parse quality.** No successful completion has run, so
-how well the parser classifies real family chat is unmeasured. That is
-step 1 below and needs credit on the account.
+**Parse quality measured:** intent accuracy 1.0, exact match 0.969,
+chit-chat false-positive rate 0.0 across 32 cases. See
+`evals/baseline.json`.
 
 ## Next
 
