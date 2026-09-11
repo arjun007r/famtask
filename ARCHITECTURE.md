@@ -8,6 +8,80 @@ Confirmed with the owner before implementation: task states (five plus
 `cancelled`), the 3-list digest cap, group tasks surfacing in both the group
 chat and personal digests, and Cloudflare as the host.
 
+## How it runs
+
+Four flows. The first two happen when you change something; the last two are
+the app actually working.
+
+### 1. Deploy — your laptop to Cloudflare
+
+```
+  npm run deploy
+       │   bundles src/worker.ts and everything it imports
+       ▼
+  wrangler ──────────────▶  Cloudflare edge
+                              ├── Worker   famtask
+                              ├── D1       famtask      (bound as env.DB)
+                              ├── Secrets  bot token, webhook secret, API key
+                              └── Cron     0 * * * *
+```
+
+Nothing of yours is running between deploys. The Worker is cold code that
+Cloudflare executes when a request or the cron wakes it.
+
+### 2. Register the webhook — once, not on every deploy
+
+```
+  node scripts/set-webhook.mjs <url>
+       │
+       ▼
+  Telegram Bot API  ·  setWebhook
+       "send this bot's updates to
+        https://famtask.famtask.workers.dev/telegram/webhook,
+        and stamp each one with secret token S"
+```
+
+BotFather created the bot and issued the token. It did **not** create the
+webhook — this call did, and it only needs repeating if the URL changes.
+Telegram then pushes updates; the Worker never polls.
+
+### 3. A message arrives
+
+```
+  You ──▶ Telegram ──── POST /telegram/webhook ────▶ Worker
+                                                       │
+   1. secret header matches?              no ──▶ 403 ──┤
+   2. update_id already seen?      (D1)  yes ──▶ 200 ──┤
+   3. known family member?         (D1)   no ──▶ ask ──┤
+   4. starts with "/"?                   yes ──▶ run ──┤
+   5. free text ──▶ Claude · parser agent              │
+                     intent + fields                   │
+   6. apply to the engine          (D1)                 │
+                                                       ▼
+  You ◀── Telegram ◀──── sendMessage ◀──── reply + buttons
+```
+
+Steps 1 and 2 are why a retry or a stray internet request costs nothing.
+Step 4 is why slash commands never spend an API call.
+
+### 4. The daily digest
+
+```
+  Cloudflare Cron  ·  hourly
+       │
+       ▼
+  Worker  scheduled()
+       │  who has reached their digest hour?   (D1, per-member timezone)
+       │  their top 5 + unclaimed work         (D1, deterministic ranking)
+       │  opening line                         (Claude · digest agent)
+       ▼
+  Telegram sendMessage ──▶ each due person's DM
+```
+
+The cron fires 24 times a day and usually sends nothing — it is the
+per-member timezone check, not the schedule, that decides who gets a digest.
+That is how one trigger serves different people at different local times.
+
 ## Layers
 
 ```
