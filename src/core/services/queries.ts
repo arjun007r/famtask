@@ -7,7 +7,7 @@ import { listMembers, matchMemberByName } from './registry.ts';
 import { queryTasks, rankTasks } from './tasks.ts';
 
 export interface Query {
-  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next';
+  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'all';
   member?: string | null;
   list?: string | null;
   search?: string | null;
@@ -25,6 +25,17 @@ export async function answerQuery(
   const limit = query.limit ?? 10;
 
   switch (query.scope) {
+    case 'all': {
+      // Every open task in the family, whoever owns it and whatever list it
+      // is in. Personal lists of other members are excluded by visibility.
+      const visible = await listsVisibleTo(db, asker);
+      const tasks = await queryTasks(db, {
+        familyId,
+        listIds: visible.map((l) => l.id),
+        search: query.search ?? undefined,
+      });
+      return renderTaskList('Everything open:', rankTasks(tasks).slice(0, query.limit ?? 25));
+    }
     case 'next': {
       const tasks = await rankedFor(db, asker, asker.id, query.search);
       const top = tasks.slice(0, 1);

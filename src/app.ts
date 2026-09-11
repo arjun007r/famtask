@@ -370,6 +370,7 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
 const HELP = [
   'What I understand:',
   '  /tasks            your open tasks',
+  '  /all              every open task, whoever owns it',
   '  /next             the single next thing',
   '  /open             unclaimed family tasks',
   '  /lists            all lists',
@@ -405,6 +406,8 @@ async function runCommand(
 
       case '/tasks':
         return answerQuery(db, member, { scope: 'mine' });
+      case '/all':
+        return answerQuery(db, member, { scope: 'all' });
       case '/next':
         return answerQuery(db, member, { scope: 'next' });
       case '/open':

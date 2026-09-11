@@ -30,3 +30,4 @@
 {"id":"chat-question","chat":"group","speaker":"Priya","text":"did you see whether it's supposed to rain tomorrow?","expect":{"intent":"chitchat"}}
 {"id":"chat-past-tense","chat":"group","speaker":"Arjun","text":"I already paid the water bill last week so that's sorted","expect":{"intent":"chitchat","intent_alt":["status_update"]},"note":"Past tense, no matching open task; must not become a new task."}
 {"id":"chat-hypothetical","chat":"group","speaker":"Priya","text":"if we ever move house we'd need to redo all of this","expect":{"intent":"chitchat"}}
+{"id":"query-all","chat":"dm","speaker":"Arjun","text":"show me everything we have open","expect":{"intent":"query","scope":"all"}}

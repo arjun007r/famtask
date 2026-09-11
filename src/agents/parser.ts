@@ -97,7 +97,11 @@ const QUERY_SCHEMA = {
   additionalProperties: false,
   required: ['scope', 'member', 'list', 'search'],
   properties: {
-    scope: { type: 'string', enum: ['mine', 'member', 'list', 'unclaimed', 'next'] },
+    scope: {
+      type: 'string',
+      enum: ['mine', 'member', 'list', 'unclaimed', 'next', 'all'],
+      description: 'Use "all" for the whole family\'s open tasks ("show me everything").',
+    },
     member: nullable({ type: 'string' }, 'Whose tasks, for scope=member.'),
     list: nullable({ type: 'string' }, 'Which list, for scope=list.'),
     search: nullable({ type: 'string' }, 'Words to filter by, or null.'),

@@ -197,6 +197,19 @@ The only copy of the family's tasks. Worth running periodically.
 npx wrangler d1 export famtask --remote --output famtask-backup.sql
 ```
 
+### Seeing tasks from Telegram
+
+| | |
+|---|---|
+| `/all` | every open task in the family, whoever owns it |
+| `/tasks` | just yours |
+| `/open` | unclaimed only |
+| `/list <name>` | one list, everyone's |
+| `/lists` | list names |
+
+`/all` and `/list` exclude other members' *personal* lists; shared lists are
+visible to everyone.
+
 ### Inspect
 
 ```bash
