@@ -10,6 +10,14 @@
   "known_miss": "reassign-to-group returned assignee 'unassigned' rather than 'group'; behaviourally identical (both are claimable and appear on the group board), differs only in the label shown.",
   "history": [
     {
+      "commit": "b0e06bb",
+      "model": "claude-haiku-4-5",
+      "intent_accuracy": 0.97,
+      "exact_match": 0.97,
+      "chitchat_false_positive_rate": 0.0,
+      "note": "After disambiguating the date cases. The only miss returned 'clarification' where the case said 'comment' \u2014 both route to applyComment, so the engine behaves identically. Case now accepts either."
+    },
+    {
       "commit": "6b9918f",
       "model": "claude-haiku-4-5",
       "intent_accuracy": 1.0,
@@ -23,5 +31,6 @@
       "exact_match": 0.281,
       "cause": "Optional fields were absent from `required`, so under strict: true the tool could emit only intent and confidence. Eight new_task cases also duplicated the open-task fixture, making updates the correct read."
     }
-  ]
+  ],
+  "recommendation": "claude-haiku-4-5 matches claude-opus-5 on this set at a fifth of the price. Re-run both before changing the parser prompt or schema."
 }

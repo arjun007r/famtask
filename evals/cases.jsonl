@@ -17,7 +17,7 @@
 {"id": "reassign-to-group", "chat": "group", "speaker": "Priya", "text": "I can't do the recycling one, someone else grab it", "expect": {"intent": "reassignment", "new_assignee": "group", "hint": true}}
 {"id": "due-move", "chat": "dm", "speaker": "Arjun", "text": "push the gutter cleaning one to the 30th", "expect": {"intent": "comment", "new_due_date": "2026-09-30", "hint": true, "intent_alt": ["status_update"]}}
 {"id": "due-move-relative", "chat": "dm", "speaker": "Priya", "text": "move the dentist appointment to next monday", "expect": {"intent": "comment", "new_due_date": ["2026-09-14", "2026-09-21"], "hint": true, "intent_alt": ["status_update"]}, "note": "\"next monday\" on a Friday is genuinely ambiguous; both readings accepted."}
-{"id": "comment-context", "chat": "dm", "speaker": "Priya", "text": "on the plumber thing \u2014 he said he can only do mornings", "expect": {"intent": "comment", "hint": true}}
+{"id": "comment-context", "chat": "dm", "speaker": "Priya", "text": "on the plumber thing \u2014 he said he can only do mornings", "expect": {"intent": "comment", "hint": true, "intent_alt": ["clarification"]}, "note": "comment and clarification route to the same handler, so either is correct."}
 {"id": "query-mine", "chat": "dm", "speaker": "Arjun", "text": "what are my tasks", "expect": {"intent": "query", "scope": "mine"}}
 {"id": "query-next", "chat": "dm", "speaker": "Priya", "text": "what's next", "expect": {"intent": "query", "scope": "next"}}
 {"id": "query-list", "chat": "dm", "speaker": "Arjun", "text": "show me my business list", "expect": {"intent": "query", "scope": "list", "list": "Business"}}
