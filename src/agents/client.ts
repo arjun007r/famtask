@@ -48,8 +48,20 @@ export function describeAgentFailure(err: unknown): string {
   if (/connection|network|fetch failed|ENOTFOUND|ECONNREFUSED/i.test(message)) {
     return 'the Anthropic API is unreachable';
   }
+  // A 400 that is not billing means the request itself is wrong -- a schema
+  // or parameter bug. The API names the offending field, and that detail is
+  // the whole diagnosis, so pass it through rather than swallowing it.
+  if (status === 400) return `the API rejected the request: ${apiMessage(message)}`;
   if (status !== undefined) return `the Anthropic API rejected the request (${status})`;
   return 'the agent failed for an unknown reason';
+}
+
+/** Pull the human part out of an SDK error string, which wraps the API's
+ *  JSON body after the status code. */
+function apiMessage(raw: string): string {
+  const match = raw.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const text = match?.[1]?.replace(/\\"/g, '"') ?? raw;
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
 function errorStatus(err: unknown): number | undefined {

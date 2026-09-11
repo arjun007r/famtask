@@ -85,46 +85,46 @@ const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
         required: ['title'],
         properties: {
           title: { type: 'string', description: 'Short imperative title.' },
-          description: { type: ['string', 'null'], description: 'Extra detail, if any.' },
+          description: { type: 'string', description: 'Extra detail. Omit if none.' },
           list: {
-            type: ['string', 'null'],
-            description: 'Existing list name if one clearly fits, else a new one, else null.',
+            type: 'string',
+            description: 'Existing list name if one clearly fits, else a new one. Omit if unsure.',
           },
           assignee: {
-            type: ['string', 'null'],
+            type: 'string',
             description:
-              'Family member name, "group" if it is for whoever picks it up, or null if unclear.',
+              'Family member name, or "group" if it is for whoever picks it up. Omit if unclear.',
           },
-          priority: { type: ['string', 'null'], enum: ['high', 'medium', 'low', null] },
-          due_date: { type: ['string', 'null'], description: 'YYYY-MM-DD, resolved from today.' },
+          priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+          due_date: { type: 'string', description: 'YYYY-MM-DD, resolved from today. Omit if none.' },
         },
       },
     },
     target_task_hint: {
-      type: ['string', 'null'],
+      type: 'string',
       description: 'Words identifying the existing task being updated or discussed.',
     },
     new_state: {
-      type: ['string', 'null'],
-      enum: ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled', null],
+      type: 'string',
+      enum: ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled'],
     },
     new_assignee: {
-      type: ['string', 'null'],
+      type: 'string',
       description: 'Member name, "group", or "unassigned". Only for intent=reassignment.',
     },
     comment: {
-      type: ['string', 'null'],
+      type: 'string',
       description: 'Text to append to the task thread, for comment/clarification/status updates.',
     },
     query: {
-      type: ['object', 'null'],
+      type: 'object',
       additionalProperties: false,
       required: ['scope'],
       properties: {
         scope: { type: 'string', enum: ['mine', 'member', 'list', 'unclaimed', 'next'] },
-        member: { type: ['string', 'null'] },
-        list: { type: ['string', 'null'] },
-        search: { type: ['string', 'null'] },
+        member: { type: 'string' },
+        list: { type: 'string' },
+        search: { type: 'string' },
       },
     },
     confidence: {

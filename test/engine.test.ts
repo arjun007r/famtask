@@ -548,6 +548,20 @@ describe('agent outage', () => {
     assert.match(describeAgentFailure(new Error('boom')), /unknown reason/);
   });
 
+  it('passes through the field a request-shape 400 names', () => {
+    const schemaError = Object.assign(
+      new Error(
+        '400 {"type":"error","error":{"type":"invalid_request_error","message":' +
+          '"tools.0.custom.input_schema: type arrays are not supported"}}',
+      ),
+      { status: 400 },
+    );
+    // Billing and a schema bug are both 400s; only one of them is fixable by
+    // the person reading the message, so they must not read alike.
+    assert.match(describeAgentFailure(schemaError), /type arrays are not supported/);
+    assert.doesNotMatch(describeAgentFailure(schemaError), /out of credit/);
+  });
+
   it('answers the DM and does not throw, so Telegram stops retrying', async () => {
     const env = await setup();
     const { channel, sent } = recorder();
