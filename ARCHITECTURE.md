@@ -252,6 +252,13 @@ Compare against `evals/baseline.json`. Note that `output_config.effort` is
 rejected by Haiku 4.5 and Sonnet 4.5; `supportsEffort()` omits it for those,
 so swapping the model does not 400.
 
+Measured once already: Haiku 4.5 matched Opus 5 on intent accuracy (1.0) and
+on chit-chat false positives (0.0), with one real field miss each, at a
+fifth of the price. Relative dates are where a smaller model is most likely
+to differ — if that starts to matter, resolving "friday" and "next monday"
+in code rather than in the prompt removes the hardest part of the job from
+the model entirely, and would help whichever model is in use.
+
 ## Moving to another account
 
 Nothing here is tied to the personal accounts it was first set up under.

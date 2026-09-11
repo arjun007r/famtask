@@ -100,7 +100,10 @@ const QUERY_SCHEMA = {
     scope: {
       type: 'string',
       enum: ['mine', 'member', 'list', 'unclaimed', 'next', 'all'],
-      description: 'Use "all" for the whole family\'s open tasks ("show me everything").',
+      description:
+        '"next" for the single most pressing thing ("what\'s next", "what should I do now"); ' +
+        '"mine" for the asker\'s whole list; "all" for the family\'s open tasks; ' +
+        '"member" for someone else\'s; "list" for one named list; "unclaimed" for unowned work.',
     },
     member: nullable({ type: 'string' }, 'Whose tasks, for scope=member.'),
     list: nullable({ type: 'string' }, 'Which list, for scope=list.'),

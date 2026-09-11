@@ -1,5 +1,5 @@
 {
-  "note": "Reference scores to compare a run against. Update deliberately, with the commit that moved them.",
+  "note": "Reference scores to compare a run against. Update deliberately, with the commit that moved them. Run both the deployed model and any candidate before switching.",
   "commit": "7210fa1",
   "model": "claude-opus-5",
   "cases": 32,
@@ -9,6 +9,14 @@
   "actionable_miss_rate": 0.0,
   "known_miss": "reassign-to-group returned assignee 'unassigned' rather than 'group'; behaviourally identical (both are claimable and appear on the group board), differs only in the label shown.",
   "history": [
+    {
+      "commit": "6b9918f",
+      "model": "claude-haiku-4-5",
+      "intent_accuracy": 1.0,
+      "exact_match": 0.909,
+      "chitchat_false_positive_rate": 0.0,
+      "note": "Three misses, two of which were ambiguous case wording rather than model error ('friday' said on a Friday; 'next monday' said on a Friday). One real miss: 'what's next' scored scope=mine. Cases since disambiguated and the scope descriptions tightened."
+    },
     {
       "commit": "8b8e106",
       "intent_accuracy": 0.781,

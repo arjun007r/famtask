@@ -75,6 +75,16 @@ const cases = readFileSync(new URL('cases.jsonl', import.meta.url), 'utf8')
   .map((line) => JSON.parse(line))
   .filter((c) => !only || only.includes(c.id));
 
+/**
+ * An expectation may be a single value or a list. Some phrasings have more
+ * than one correct reading — "next Monday" said on a Friday is either the
+ * coming Monday or the one after, and English does not settle it. Marking
+ * one of those wrong measures the case author, not the model.
+ */
+function accepts(expected, got) {
+  return [expected].flat().includes(got);
+}
+
 /** Field checks. Each returns null when it passes, or why it failed. */
 function grade(c, parsed) {
   const e = c.expect;
@@ -91,8 +101,8 @@ function grade(c, parsed) {
   if (e.priority && tasks[0]?.priority !== e.priority) {
     fails.push(`priority=${tasks[0]?.priority ?? '-'} want ${e.priority}`);
   }
-  if (e.due_date && tasks[0]?.due_date !== e.due_date) {
-    fails.push(`due=${tasks[0]?.due_date ?? '-'} want ${e.due_date}`);
+  if (e.due_date && !accepts(e.due_date, tasks[0]?.due_date)) {
+    fails.push(`due=${tasks[0]?.due_date ?? '-'} want ${[e.due_date].flat().join(' or ')}`);
   }
   if (e.list) {
     // A list name lives on the query for a query, and on the task otherwise.
@@ -107,8 +117,8 @@ function grade(c, parsed) {
   if (e.new_state && parsed.new_state !== e.new_state) {
     fails.push(`state=${parsed.new_state ?? '-'} want ${e.new_state}`);
   }
-  if (e.new_due_date && parsed.new_due_date !== e.new_due_date) {
-    fails.push(`new_due=${parsed.new_due_date ?? '-'} want ${e.new_due_date}`);
+  if (e.new_due_date && !accepts(e.new_due_date, parsed.new_due_date)) {
+    fails.push(`new_due=${parsed.new_due_date ?? '-'} want ${[e.new_due_date].flat().join(' or ')}`);
   }
   if (e.new_assignee) {
     const got = (parsed.new_assignee ?? '').toLowerCase();
