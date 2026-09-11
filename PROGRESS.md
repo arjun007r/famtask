@@ -35,6 +35,22 @@
   inbox intent handling against fixtures, task matching, agent-output
   sanitising, and the Telegram codec/update parser.
 
+## Evals
+
+`npm run eval` scores the parsing agent against `evals/cases.jsonl` — 32
+cases covering every intent, including seven chit-chat negatives and the two
+messages that failed in real use. Grading is programmatic: intent is a
+closed set and the fields are structured, so a judge model would add cost
+and noise without measuring anything a direct comparison misses.
+
+Reported per run: intent accuracy, exact field match, **chit-chat false
+positive rate** (the one that matters most — a junk task in the family's
+list is worse than a missed one), and actionable miss rate. Exits non-zero
+below `--min` (default 0.85) so it can gate a deploy.
+
+`--fixtures <file>` scores recorded parses without calling the API; that is
+how the grader itself is tested.
+
 ## Verified
 
 `npm test` (41/41), `npm run typecheck` clean, and a CLI walkthrough:

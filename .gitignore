@@ -9,3 +9,6 @@ dist/
 
 # setup.sh progress, contains the webhook secret
 .famtask-setup
+
+# eval output
+evals/results.json
