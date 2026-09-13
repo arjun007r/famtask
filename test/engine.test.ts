@@ -29,6 +29,7 @@ import {
 import { buildDigest, localHour, membersDueNow, recordDigestSends } from '../src/core/services/digest.ts';
 import { applyParsed, matchTask, type InboxContext } from '../src/core/services/inbox.ts';
 import { answerQuery } from '../src/core/services/queries.ts';
+import { reconcile, shapeHash } from '../src/core/services/sync.ts';
 import { sanitize } from '../src/agents/digest-writer.ts';
 import { TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
@@ -836,5 +837,139 @@ describe('model capability gating', () => {
     assert.equal(supportsEffort('claude-sonnet-4-5'), false);
     assert.equal(supportsEffort('claude-opus-5'), true);
     assert.equal(supportsEffort('claude-sonnet-5'), true);
+  });
+});
+
+
+describe('one-way mirror', () => {
+  /** Records what a target was asked to do, and can be told to fail. */
+  function fakeTarget(failOn?: string) {
+    const calls: string[] = [];
+    let n = 0;
+    return {
+      calls,
+      target: {
+        name: 'fake',
+        async create(task: any) {
+          if (task.title === failOn) throw new Error('target rejected it');
+          calls.push(`create:${task.title}`);
+          n += 1;
+          return `ext_${n}`;
+        },
+        async update(id: string, task: any) { calls.push(`update:${task.title}`); },
+        async close(id: string) { calls.push(`close:${id}`); },
+        async reopen(id: string) { calls.push(`reopen:${id}`); },
+      } as any,
+    };
+  }
+
+  it('creates once, then skips while nothing changes', async () => {
+    const env = await setup();
+    const { target, calls } = fakeTarget();
+    await createTask(env.db, {
+      familyId: env.familyId, listId: env.home.id, title: 'Book the window cleaner',
+      assigneeKind: 'member', assignedTo: env.arjun.id,
+    });
+
+    const first = await reconcile(env.db, target, env.familyId);
+    assert.equal(first.created, 1);
+
+    const second = await reconcile(env.db, target, env.familyId);
+    assert.equal(second.created, 0);
+    assert.equal(second.skipped, 1, 'an unchanged task must not be pushed again');
+    assert.deepEqual(calls, ['create:Book the window cleaner']);
+  });
+
+  it('pushes an edit, and closes when the task is done', async () => {
+    const env = await setup();
+    const { target, calls } = fakeTarget();
+    const task = await createTask(env.db, {
+      familyId: env.familyId, listId: env.home.id, title: 'Renew the domain',
+      assigneeKind: 'member', assignedTo: env.arjun.id,
+    });
+    await reconcile(env.db, target, env.familyId);
+
+    await setState(env.db, task.id, 'blocked', env.arjun.id);
+    const edited = await reconcile(env.db, target, env.familyId);
+    assert.equal(edited.updated, 1);
+
+    await setState(env.db, task.id, 'done', env.arjun.id);
+    const done = await reconcile(env.db, target, env.familyId);
+    assert.equal(done.closed, 1);
+    assert.deepEqual(calls, ['create:Renew the domain', 'update:Renew the domain', 'close:ext_1']);
+  });
+
+  it('reopens a task that comes back from done', async () => {
+    const env = await setup();
+    const { target, calls } = fakeTarget();
+    const task = await createTask(env.db, {
+      familyId: env.familyId, listId: env.home.id, title: 'Pay the water bill',
+    });
+    await reconcile(env.db, target, env.familyId);
+    await setState(env.db, task.id, 'done', env.arjun.id);
+    await reconcile(env.db, target, env.familyId);
+    await setState(env.db, task.id, 'todo', env.arjun.id);
+
+    const back = await reconcile(env.db, target, env.familyId);
+    assert.equal(back.reopened, 1);
+    assert.ok(calls.includes('reopen:ext_1'));
+  });
+
+  it('never creates a task that was already finished', async () => {
+    const env = await setup();
+    const { target, calls } = fakeTarget();
+    const task = await createTask(env.db, {
+      familyId: env.familyId, listId: env.home.id, title: 'Already handled',
+    });
+    await setState(env.db, task.id, 'done', env.arjun.id);
+
+    const report = await reconcile(env.db, target, env.familyId);
+    assert.equal(report.created, 0);
+    assert.deepEqual(calls, [], 'closed history should not be replayed into the mirror');
+  });
+
+  it('retries a failed push instead of losing it', async () => {
+    const env = await setup();
+    await createTask(env.db, {
+      familyId: env.familyId, listId: env.home.id, title: 'Flaky one',
+    });
+
+    const failing = fakeTarget('Flaky one');
+    const bad = await reconcile(env.db, failing.target, env.familyId);
+    assert.equal(bad.failed, 1);
+    assert.equal(bad.created, 0);
+
+    // Same target name, now healthy: the task must still be pending.
+    const healthy = fakeTarget();
+    const good = await reconcile(env.db, healthy.target, env.familyId);
+    assert.equal(good.created, 1, 'a failure must not be recorded as synced');
+  });
+
+  it('mirrors the escalated priority, not the stored one', async () => {
+    const env = await setup();
+    const seen: any[] = [];
+    const target = {
+      name: 'fake',
+      async create(task: any) { seen.push(task); return 'ext_1'; },
+      async update() {}, async close() {}, async reopen() {},
+    } as any;
+
+    await createTask(env.db, {
+      familyId: env.familyId, listId: env.home.id, title: 'Renew the passport',
+      priority: 'low', dueAt: '2026-09-13T00:00:00.000Z',
+    });
+    await reconcile(env.db, target, env.familyId, { now: new Date('2026-09-12T10:00:00Z') });
+    assert.equal(seen[0].priority, 'high', 'due tomorrow outranks the stored priority');
+  });
+
+  it('changes the hash only for fields the target renders', () => {
+    const base: any = {
+      id: 't1', title: 'A', description: null, listName: 'Family', assigneeName: 'Arjun',
+      state: 'todo', priority: 'medium', dueAt: null, closed: false,
+    };
+    assert.equal(shapeHash(base), shapeHash({ ...base, id: 'different' }));
+    assert.notEqual(shapeHash(base), shapeHash({ ...base, title: 'B' }));
+    assert.notEqual(shapeHash(base), shapeHash({ ...base, assigneeName: 'Priya' }));
+    assert.notEqual(shapeHash(base), shapeHash({ ...base, closed: true }));
   });
 });

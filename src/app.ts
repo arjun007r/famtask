@@ -22,6 +22,8 @@ import type {
   RenderedMessage,
 } from './channel/types.ts';
 import type { Db } from './core/db/adapter.ts';
+import { reconcile } from './core/services/sync.ts';
+import type { SyncTarget } from './sync/types.ts';
 import { UserError } from './core/errors.ts';
 import { inferPriorityFromText } from './core/priority.ts';
 import {
@@ -59,6 +61,8 @@ import type { FamilyMember } from './core/types.ts';
 export interface AppDeps {
   db: Db;
   channel: MessagingChannel;
+  /** Optional one-way mirror (Todoist). Absent means the feature is off. */
+  sync?: SyncTarget | null;
   /** Absent means no agent layer: commands still work, free text does not. */
   anthropic: Anthropic | null;
   model?: string;
@@ -198,6 +202,20 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
     await reply(deps, inbound, { text: noReplyReason(parsed) });
   }
   await deliver(deps, result.notify, inbound.chatId);
+}
+
+/**
+ * Push anything that changed to the mirror. Safe to call after every
+ * message: unchanged tasks are skipped on a hash compare, and a failure is
+ * retried on the next pass rather than losing the task.
+ */
+export async function mirrorTasks(deps: AppDeps): Promise<void> {
+  if (!deps.sync) return;
+  const family = await ensureFamily(deps.db);
+  const report = await reconcile(deps.db, deps.sync, family.id, { now: now(deps) });
+  if (report.created || report.updated || report.closed || report.reopened || report.failed) {
+    console.log(`sync ${deps.sync.name}`, report);
+  }
 }
 
 /** Explain a deliberate non-action, so it cannot be mistaken for a fault. */
@@ -351,6 +369,12 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
       today,
     );
     sent += 1;
+  }
+
+  if (deps.sync) {
+    await reconcile(deps.db, deps.sync, family.id, { now: at }).catch((err) =>
+      console.error('scheduled sync failed', err),
+    );
   }
 
   if (sent > 0 && family.group_chat_id) {

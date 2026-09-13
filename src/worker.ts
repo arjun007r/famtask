@@ -1,8 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { handleGroupMembership, handleInboundAction, handleInboundMessage, runScheduledDigests, type AppDeps } from './app.ts';
+import {
+  handleGroupMembership,
+  handleInboundAction,
+  handleInboundMessage,
+  mirrorTasks,
+  runScheduledDigests,
+  type AppDeps,
+} from './app.ts';
 import { d1Adapter } from './core/db/adapter.ts';
 import { nowIso } from './core/ids.ts';
 import { createTelegramApi } from './telegram/api.ts';
+import { todoistTarget } from './sync/todoist.ts';
 import { telegramChannel } from './telegram/channel.ts';
 import { parseUpdate, type TgUpdate } from './telegram/webhook.ts';
 
@@ -13,6 +21,8 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   CLAUDE_MODEL?: string;
   TELEGRAM_BOT_USERNAME?: string;
+  /** Optional: mirror tasks into Todoist. Absent means the mirror is off. */
+  TODOIST_TOKEN?: string;
 }
 
 function buildDeps(env: Env): AppDeps {
@@ -21,12 +31,13 @@ function buildDeps(env: Env): AppDeps {
     db: d1Adapter(env.DB),
     channel: telegramChannel(api),
     anthropic: env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null,
+    sync: env.TODOIST_TOKEN ? todoistTarget(env.TODOIST_TOKEN) : null,
     model: env.CLAUDE_MODEL,
   };
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -62,6 +73,10 @@ export default {
       if (parsed.message) await handleInboundMessage(deps, parsed.message);
       else if (parsed.action) await handleInboundAction(deps, parsed.action);
       else if (parsed.groupMembership) await handleGroupMembership(deps, parsed.groupMembership);
+      // After the reply, never before it: the mirror must not add latency
+      // to what the person is waiting for, or fail their message if Todoist
+      // is down.
+      ctx.waitUntil(mirrorTasks(deps).catch((err) => console.error('sync failed', err)));
     } catch (err) {
       // Drop the dedupe row so Telegram's retry gets a real second attempt.
       await deps.db.run('DELETE FROM processed_updates WHERE update_id = ?', [parsed.updateId]);

@@ -296,6 +296,27 @@ deterministic word overlap in `inbox.ts:matchTask`. The agent already named
 its target; a second model call would be slower and no more reliable on
 three-word titles.
 
+## Mirroring out
+
+`src/sync/` is a second boundary, shaped like the channel one: `SyncTarget`
+is the interface, `todoist.ts` the only implementation, and `core/services/
+sync.ts` decides *what* to push without knowing where it goes.
+
+The push is a **reconcile, not a fire-on-write**. Each task's mirrored shape
+is hashed and stored next to its external id, so a sweep skips everything
+unchanged in one query. That has two consequences worth keeping: it is cheap
+enough to run after every message *and* on the cron, and a failed push heals
+on the next pass, because only a successful one records its hash.
+
+One-way, deliberately. famtask owns the state; the target is an audience.
+Syncing back would need conflict rules for two writers over one row, and the
+value here is that the rest of the family can *see* tasks in an app they
+already have — not that they can edit them there.
+
+Todoist rather than Google Tasks: Google Tasks lists cannot be shared with
+another person, so a family would each see only their own, and it needs
+per-user OAuth. Todoist has shared projects and a personal API token.
+
 ## Cost control
 
 Calls avoided entirely:

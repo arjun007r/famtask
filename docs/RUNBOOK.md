@@ -49,6 +49,49 @@ Start with DMs. Add the bot to the family group only once that feels right.
 
 ---
 
+## Mirroring tasks into Todoist (optional)
+
+Off unless `TODOIST_TOKEN` is set. One-way: famtask stays the source of
+truth and Todoist is a read-only audience, so the family can see tasks in an
+app they already have without anyone learning a new one.
+
+```bash
+# Todoist → Settings → Integrations → Developer → copy the API token
+npx wrangler secret put TODOIST_TOKEN
+npm run db:migrate      # adds sync_links
+npm run deploy
+```
+
+Each famtask list becomes a Todoist project of the same name, created on
+first use. Share that project with the family from inside Todoist.
+
+| famtask | Todoist |
+|---|---|
+| title / description | content / description |
+| list | project |
+| effective priority (incl. due-date escalation) | priority 4 / 2 / 1 |
+| due date | due_date |
+| assignee | a label, e.g. `@arjun` |
+| `blocked` | label `@blocked` |
+| `needs_clarification` | label `@needs-info` |
+| `done` / `cancelled` | task closed |
+
+**Completing a task in Todoist does not come back.** That is deliberate:
+two writers over one row needs conflict rules this does not have. Mark
+things done in Telegram.
+
+Pushes run after the reply, never before it, so Todoist being slow or down
+never delays an answer or fails a message. A failed push is retried on the
+next message and on the hourly cron, because only a *successful* push is
+recorded.
+
+### Google Tasks
+
+Not supported, and not planned. Google Tasks lists cannot be shared with
+another person — each family member would see only their own — and it needs
+per-user OAuth rather than a single token. Todoist has shared projects and a
+personal API token, which is why it is the target.
+
 ## Troubleshooting
 
 ### The bot does not reply at all
