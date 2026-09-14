@@ -19,8 +19,12 @@ export interface LineOptions {
   now?: Date;
   /** Only worth printing when more than one list is on screen. */
   showList?: boolean;
-  /** Only worth printing where the tasks are not all the reader's own. */
-  showAssignee?: boolean;
+  /**
+   * Off only under a heading that already states ownership, such as the
+   * digest's "Up for grabs" tail. Never off merely because the reader could
+   * work it out.
+   */
+  showOwner?: boolean;
 }
 
 export function taskLine(task: TaskView, opts: LineOptions = {}): string {
@@ -35,14 +39,18 @@ export function taskLine(task: TaskView, opts: LineOptions = {}): string {
       ? ` (OVERDUE — was due ${shortDate(task.due_at)})`
       : ` (due ${shortDate(task.due_at)})`
     : '';
-  const owner =
-    task.assignee_kind === 'group'
+  // Always named, even in someone's own digest. Who holds a task is the
+  // question a family asks first, and a reader should never have to know a
+  // rule to answer it.
+  const owner = opts.showOwner === false
+    ? ''
+    : task.assignee_kind === 'group'
       ? ' — up for grabs'
       : task.assignee_kind === 'unassigned'
         ? ' — unassigned'
-        : opts.showAssignee && task.assignee_name
+        : task.assignee_name
           ? ` — ${firstName(task.assignee_name)}`
-          : '';
+          : ' — unassigned';
   const list = opts.showList ? ` [${task.list_name}]` : '';
   return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due}${list}${owner}`.trim();
 }
@@ -57,16 +65,16 @@ export function renderDigest(digest: Digest): RenderedMessage {
   const { member, items, unclaimed, lists, needsListChoice } = digest;
   const lines: string[] = [`Morning ${firstName(member.name)} — here's your day.`, ''];
 
+  const showList = multipleLists([...items, ...unclaimed]);
   if (items.length === 0) {
     lines.push('Nothing assigned to you right now. 🎉');
   } else {
-    const showList = multipleLists([...items, ...unclaimed]);
     items.forEach((t, i) => lines.push(taskLine(t, { index: i + 1, showList })));
   }
 
   if (unclaimed.length > 0) {
     lines.push('', 'Up for grabs:');
-    unclaimed.forEach((t) => lines.push(`• ${t.title} [${t.list_name}]`));
+    unclaimed.forEach((t) => lines.push(`• ${taskLine(t, { showList, showOwner: false })}`));
   }
 
   lines.push('', `Lists: ${lists.map((l) => l.name).join(', ') || 'none yet'}`);
@@ -106,17 +114,11 @@ export function renderGroupBoard(tasks: TaskView[]): RenderedMessage {
   };
 }
 
-export function renderTaskList(
-  title: string,
-  tasks: TaskView[],
-  opts: { showAssignee?: boolean } = {},
-): RenderedMessage {
+export function renderTaskList(title: string, tasks: TaskView[]): RenderedMessage {
   if (tasks.length === 0) return { text: `${title}\n\nNothing here.` };
   const lines = [title, ''];
   const showList = multipleLists(tasks);
-  tasks.forEach((t, i) =>
-    lines.push(taskLine(t, { index: i + 1, showList, showAssignee: opts.showAssignee })),
-  );
+  tasks.forEach((t, i) => lines.push(taskLine(t, { index: i + 1, showList })));
   return {
     text: lines.join('\n'),
     buttons: tasks

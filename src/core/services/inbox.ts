@@ -154,7 +154,6 @@ async function createFromParsed(
     reply: renderTaskList(
       created.length === 1 ? 'Added:' : `Added ${created.length} tasks:`,
       created,
-      { showAssignee: true },
     ),
     notify,
   };
@@ -275,7 +274,7 @@ async function notFound(
   if (open.length > 0) {
     lines.push('', 'Open right now:');
     const showList = new Set(open.map((t) => t.list_name)).size > 1;
-    open.forEach((t) => lines.push(taskLine(t, { showList, showAssignee: true })));
+    open.forEach((t) => lines.push(taskLine(t, { showList })));
   }
   return { text: lines.join('\n') };
 }

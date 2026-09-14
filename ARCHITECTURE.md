@@ -109,12 +109,16 @@ equivalent and a new entrypoint. Nothing in `src/core/` changes.
 They produce `RenderedMessage`, which is the channel-neutral interface, not a
 Telegram type.
 
-**A line only carries what the reader cannot infer.** The list tag appears
-only when more than one list is on screen — on a family with a single list
-it printed `[Family]` on every row and was read as an assignee. The owner's
-name appears only where the tasks are not all the reader's own, so a
-personal digest stays clean while `/all` and `/list` say who holds what.
-Group and unassigned work is always marked, since that is never inferable.
+**Every task line ends with who holds it.** No exceptions, including a
+person's own digest. Suppressing the name there because "they are all yours
+anyway" is the author's logic, not the reader's — it makes someone work out
+a rule to answer the first question a family asks. Group and unassigned work
+is marked in the same position.
+
+The **list** tag is the opposite case and does appear conditionally: only
+when more than one list is on screen. Printed on every row of a
+single-list family it said nothing and sat exactly where an assignee would,
+which is how it came to be read as one.
 
 **Messages are plain text, no markup.** Every channel renders emphasis
 differently and Telegram's MarkdownV2 escaping is a reliable source of

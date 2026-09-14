@@ -996,22 +996,19 @@ describe('task lines say who and where, only when it helps', () => {
     assert.ok(taskLine(two[0]!, { showList: multipleLists(two) }).includes('[Family]'));
   });
 
-  it('names the owner where the tasks are not all the reader\'s', () => {
-    assert.ok(taskLine(task({}), { showAssignee: true }).endsWith('— Arjun'));
-    // In a personal digest every task is theirs, so the name is noise.
-    assert.ok(!taskLine(task({}), { showAssignee: false }).includes('Arjun'));
+  it('always names the owner, including in the reader\'s own digest', () => {
+    // Suppressing it "because they are all yours" makes the reader work out
+    // a rule to answer the first question a family asks.
+    assert.ok(taskLine(task({})).endsWith('— Arjun'));
+    assert.ok(taskLine(task({ assignee_name: 'Preethi Raja' })).endsWith('— Preethi'));
   });
 
-  it('still flags work nobody owns, however it is asked for', () => {
-    for (const showAssignee of [true, false]) {
-      assert.ok(
-        taskLine(task({ assignee_kind: 'group', assignee_name: null }), { showAssignee })
-          .includes('up for grabs'),
-      );
-      assert.ok(
-        taskLine(task({ assignee_kind: 'unassigned', assignee_name: null }), { showAssignee })
-          .includes('unassigned'),
-      );
-    }
+  it('flags work nobody owns', () => {
+    assert.ok(
+      taskLine(task({ assignee_kind: 'group', assignee_name: null })).includes('up for grabs'),
+    );
+    assert.ok(
+      taskLine(task({ assignee_kind: 'unassigned', assignee_name: null })).includes('unassigned'),
+    );
   });
 });

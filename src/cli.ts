@@ -68,7 +68,7 @@ async function main(): Promise<void> {
         });
         await addMember(d.db, {
           familyId: family.id,
-          name: 'Priya',
+          name: 'Preethi',
           telegramUserId: '1002',
           telegramChatId: '1002',
           timezone: 'UTC',
