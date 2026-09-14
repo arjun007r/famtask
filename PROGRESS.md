@@ -22,6 +22,13 @@
 - **Worker** (`src/worker.ts`) — webhook with secret-token check, update
   dedupe with rollback on failure, hourly cron.
 - **CLI** (`src/cli.ts`) — drives the same `app.ts` with a console channel.
+- **Due dates drive urgency** — `overdue` / `due-soon` and the priority bump
+  are derived from `due_at`, never stored, so moving a deadline out
+  de-escalates by itself. Deadlines move by message.
+- **`/all`** — every open task in the family, whoever owns it.
+- **One-way Todoist mirror** (`src/sync/`) — off unless `TODOIST_TOKEN` is
+  set. A reconcile, not a fire-on-write, so a failed push heals on the next
+  pass. Chosen over Google Tasks, whose lists cannot be shared.
 - **Notifications** — assignment, reassignment, status changes and comments
   DM the other party immediately; the daily digest is the backstop, not the
   only channel.
@@ -30,7 +37,7 @@
 - **Agent-outage handling** — an unreachable API never fails an update or
   triggers a Telegram retry loop; DMs get a plain sentence naming the cause,
   the group stays quiet, commands and the digest keep working.
-- **Tests** — 41 passing (`npm test`), covering the state machine, ranking
+- **Tests** — 66 passing (`npm test`), covering the state machine, ranking
   and rotation, list-cap behaviour, digest assembly and timezone gating,
   inbox intent handling against fixtures, task matching, agent-output
   sanitising, and the Telegram codec/update parser.
@@ -53,7 +60,7 @@ how the grader itself is tested.
 
 ## Verified
 
-`npm test` (41/41), `npm run typecheck` clean, and a CLI walkthrough:
+`npm test` (66/66), `npm run typecheck` clean, and a CLI walkthrough:
 seed → `/add` → `/tasks` → button tap → task detail → digest → `/me`.
 
 **Request shape confirmed against the live API.** Real calls reached

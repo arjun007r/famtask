@@ -39,27 +39,37 @@ to match on both sides and is otherwise unrecoverable.
 
 **Working and verified in production:** the whole delivery chain (Telegram →
 webhook → Worker → D1 → reply), the bootstrap flow, slash commands, task
-creation from free text, and graceful degradation when the Anthropic API is
-unreachable.
+creation from free text, graceful degradation when the Anthropic API is
+unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
+schedule with the agent's intro line, the OVERDUE marker and due-date
+priority escalation all correct on its first real run.
 
-**Verified by tests:** 52 unit tests — state machine, ranking, due-date
+**Verified by tests:** 66 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
-inbox intents against fixtures, agent-outage handling, the Telegram codec.
+inbox intents against fixtures, agent-outage handling, the Telegram codec,
+the strict-schema invariants, the one-way mirror, and line formatting.
 
-**Measured:** parse quality. 32-case eval at commit `7210fa1` —
-intent accuracy **1.0**, exact match **0.969**, chit-chat false positives
-**0.0**. Scores and the prior run are in `evals/baseline.json`; compare
-against it after any change to the parser prompt or schema.
+**Measured:** parse quality, over 33 eval cases.
 
-The one miss is a label, not a behaviour: "someone else grab it" came back
-as `unassigned` rather than `group`, and the two are identical in every
-query. `npm run eval` (32 cases) exists and the
-grader is self-tested, but the first full run had not finished at handoff.
-That number is the main open question — see Next.
+| | intent | exact match | chit-chat false positives |
+|---|---|---|---|
+| `claude-opus-5` | 1.00 | 0.969 | 0.0 |
+| `claude-haiku-4-5` | 0.97 | 0.97 | 0.0 |
 
-**Never run in production:** the daily digest. The cron is registered but no
-digest has fired for a real member yet. Nothing has exercised
-`runScheduledDigests` outside tests.
+Equivalent on everything that changes behaviour, at a fifth of the price —
+Haiku is the recommendation. Full history and causes in
+`evals/baseline.json`; re-run both before changing the parser prompt or
+schema.
+
+**Never run with two people.** Every task so far is Arjun's. Nothing has
+exercised the notification path (assignee told immediately) or the bounce
+states (`blocked` / `needs_clarification` travelling between two adults)
+with a real second person on the other end. That is the next real test, and
+the mechanic nothing else in the market models.
+
+**Built but never exercised against the live API:** the Todoist mirror. The
+reconcile logic is tested against a fake target; the HTTP layer is not, and
+is off unless `TODOIST_TOKEN` is set.
 
 ## Decisions already made — don't relitigate
 
@@ -103,21 +113,18 @@ digest has fired for a real member yet. Nothing has exercised
 
 ## Next
 
-1. **Read the eval result.** `npm run eval`. The number that matters most is
-   `chitchat_false_positive_rate` — junk in the family's list is worse than
-   a missed task.
-2. **Watch for empty extraction.** The parser once returned `new_task` at
-   0.90 confidence with an empty `tasks` array. There is now a fallback that
-   uses the person's own words as the title, so it no longer loses work — but
-   if the eval shows it recurring, switch `tool_choice` from `auto` to
-   forcing the tool (Opus 5 supports it; see `src/agents/client.ts`).
-3. **Add the second family member.** She DMs the bot, it replies with her
-   Telegram id, then `/adduser <id> <name>`.
-4. **Watch the first real digest.** Set `/settz` first or it fires at 09:00
-   UTC. Nothing has ever run this path for real.
-5. **Then the group.** Turn Group Privacy off in BotFather *before* adding
+1. **Add Preethi.** She DMs the bot, it replies with her Telegram id, then
+   `/adduser <id> Preethi`. She sets her own `/settz`. This is the gating
+   step for everything below — the app has never had two people in it.
+2. **Watch the notification and bounce paths.** When a task is assigned to
+   her she should be DM'd immediately, and when she sends it back blocked it
+   should reach Arjun's digest. Both are built and tested, neither has run
+   between two real people.
+3. **Switch to Haiku** — `CLAUDE_MODEL` in `wrangler.toml`. Measured
+   equivalent, a fifth of the cost.
+4. **Then the group.** Turn Group Privacy off in BotFather *before* adding
    the bot, or it only sees @-mentions.
-6. **Tune `looksActionable()`** in `src/app.ts` against real group messages.
+5. **Tune `looksActionable()`** in `src/app.ts` against real group messages.
    It is a keyword prefilter that stops every idle message costing an API
    call, and it is guesswork until it has seen a week of real traffic.
 
