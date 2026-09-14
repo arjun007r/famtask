@@ -31,14 +31,25 @@ import { applyParsed, matchTask, type InboxContext } from '../src/core/services/
 import { answerQuery } from '../src/core/services/queries.ts';
 import { reconcile, shapeHash } from '../src/core/services/sync.ts';
 import { sanitize } from '../src/agents/digest-writer.ts';
-import { taskLine, multipleLists } from '../src/channel/format.ts';
+import { taskLine, multipleLists, renderTaskList } from '../src/channel/format.ts';
 import { TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
-import { handleInboundMessage, looksActionable, type AppDeps } from '../src/app.ts';
+import {
+  handleInboundAction,
+  handleInboundMessage,
+  looksActionable,
+  type AppDeps,
+} from '../src/app.ts';
 import { describeAgentFailure, supportsEffort } from '../src/agents/client.ts';
 import type Anthropic from '@anthropic-ai/sdk';
-import type { MessagingChannel, OutboundMessage } from '../src/channel/types.ts';
+import type {
+  Action,
+  MessagingChannel,
+  OutboundMessage,
+  RenderedMessage,
+} from '../src/channel/types.ts';
+import { rememberView } from '../src/core/services/views.ts';
 import type { FamilyMember, TaskView } from '../src/core/types.ts';
 
 async function setup() {
@@ -633,7 +644,7 @@ describe('agent outage', () => {
     return {
       sent,
       channel: {
-        async send(message) { sent.push(message); },
+        async send(message) { sent.push(message); return String(sent.length); },
         async acknowledge() {},
       },
     };
@@ -1010,5 +1021,155 @@ describe('task lines say who and where, only when it helps', () => {
     assert.ok(
       taskLine(task({ assignee_kind: 'unassigned', assignee_name: null })).includes('unassigned'),
     );
+  });
+});
+
+describe('button taps', () => {
+  /** A channel that edits in place, so a test can read the screen back. */
+  function screen() {
+    const sent: OutboundMessage[] = [];
+    const edits: RenderedMessage[] = [];
+    const toasts: (string | undefined)[] = [];
+    const channel: MessagingChannel = {
+      async send(message) {
+        sent.push(message);
+        return String(sent.length);
+      },
+      async acknowledge(_token, text) {
+        toasts.push(text);
+      },
+      async update(_chatId, _messageId, message) {
+        edits.push(message);
+      },
+    };
+    return { channel, sent, edits, toasts, last: () => edits[edits.length - 1] };
+  }
+
+  async function stage() {
+    const base = await setup();
+    const s = screen();
+    const deps: AppDeps = { db: base.db, channel: s.channel, anthropic: null };
+    const task = await createTask(base.db, {
+      familyId: base.familyId,
+      listId: base.home.id,
+      title: 'Book the HVAC service',
+      createdBy: base.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: base.arjun.id,
+    });
+    // Stand in for a digest the bot already sent as message 7.
+    const board = renderTaskList('Your tasks', [await getTaskView(base.db, task.id)]);
+    await rememberView(base.db, 'c1', '7', board.view!);
+    return { ...base, ...s, deps, task };
+  }
+
+  function tap(action: Action, userId = '1001') {
+    return {
+      chatId: 'c1',
+      chatType: 'dm' as const,
+      userId,
+      userDisplayName: 'Arjun',
+      action,
+      messageId: '7',
+      ackToken: 'cb1',
+    };
+  }
+
+  it('asks before finishing a task, and changes nothing until confirmed', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'task_done', taskId: st.task.id }));
+
+    assert.match(st.last()!.text, /Mark this done\?/);
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'todo');
+
+    const labels = st.last()!.buttons!.flat().map((b) => b.label);
+    assert.ok(labels.some((l) => /Yes/.test(l)) && labels.some((l) => /Not yet/.test(l)));
+  });
+
+  it('backs out of the confirmation leaving the task alone', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'task_done', taskId: st.task.id }));
+    await handleInboundAction(st.deps, tap({ kind: 'view_back' }));
+
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'todo');
+    assert.match(st.last()!.text, /Your tasks/);
+  });
+
+  it('redraws the message so a finished task reads as finished', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'task_done', taskId: st.task.id }));
+    await handleInboundAction(st.deps, tap({ kind: 'task_done_confirm', taskId: st.task.id }));
+
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'done');
+    // The screen itself says so -- not just the toast, which vanishes.
+    assert.match(st.last()!.text, /✓ Book the HVAC service/);
+    assert.match(st.last()!.text, /Your tasks/);
+    assert.ok(st.toasts.some((t) => t?.includes('Done: Book the HVAC service')));
+  });
+
+  it('offers blocked, needs-info and reassign behind the ⋯ button', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'task_menu', taskId: st.task.id }));
+
+    const labels = st.last()!.buttons!.flat().map((b) => b.label);
+    assert.ok(labels.some((l) => /Blocked/.test(l)));
+    assert.ok(labels.some((l) => /Needs info/.test(l)));
+    assert.ok(labels.some((l) => /Reassign/.test(l)));
+    assert.ok(labels.some((l) => /Back/.test(l)));
+  });
+
+  it('blocks a task from the menu and returns to the listing', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'task_menu', taskId: st.task.id }));
+    await handleInboundAction(st.deps, tap({ kind: 'task_block', taskId: st.task.id }));
+
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'blocked');
+    assert.match(st.last()!.text, /Your tasks/);
+    assert.match(st.last()!.text, /⛔ Book the HVAC service/);
+  });
+
+  it('reassigns to another family member and tells them', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'task_reassign', taskId: st.task.id }));
+
+    const labels = st.last()!.buttons!.flat().map((b) => b.label);
+    assert.ok(labels.includes('Priya'));
+    assert.ok(labels.some((l) => /Up for grabs/.test(l)));
+
+    await handleInboundAction(
+      st.deps,
+      tap({ kind: 'task_assign', taskId: st.task.id, to: st.priya.id }),
+    );
+    const after = await getTaskView(st.db, st.task.id);
+    assert.equal(after.assigned_to, st.priya.id);
+    assert.match(st.last()!.text, /— Priya/);
+    assert.ok(st.sent.some((m) => m.chatId === '1002' && /passed you/.test(m.text)));
+  });
+
+  it('still works on a message sent before views were recorded', async () => {
+    const st = await stage();
+    const orphan = { ...tap({ kind: 'task_done_confirm', taskId: st.task.id }), messageId: '999' };
+    await handleInboundAction(st.deps, orphan);
+
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'done');
+    assert.ok(st.toasts.some((t) => t?.includes('Done:')));
+  });
+
+  it('round-trips every button action through the wire encoding', () => {
+    const actions: Action[] = [
+      { kind: 'task_done', taskId: 'tsk_1' },
+      { kind: 'task_done_confirm', taskId: 'tsk_1' },
+      { kind: 'task_block', taskId: 'tsk_1' },
+      { kind: 'task_ask', taskId: 'tsk_1' },
+      { kind: 'task_menu', taskId: 'tsk_1' },
+      { kind: 'task_reassign', taskId: 'tsk_1' },
+      { kind: 'task_assign', taskId: 'tsk_1', to: 'mem_2' },
+      { kind: 'view_back' },
+    ];
+    for (const action of actions) {
+      const wire = encodeAction(action);
+      assert.ok(Buffer.byteLength(wire) <= 64, `${wire} exceeds Telegram's callback_data cap`);
+      assert.deepEqual(decodeAction(wire), action);
+    }
   });
 });

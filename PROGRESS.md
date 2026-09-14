@@ -29,6 +29,11 @@
 - **One-way Todoist mirror** (`src/sync/`) — off unless `TODOIST_TOKEN` is
   set. A reconcile, not a fire-on-write, so a failed push heals on the next
   pass. Chosen over Google Tasks, whose lists cannot be shared.
+- **Interactive buttons** (`src/core/services/views.ts`) — every listing row
+  carries the obvious action plus `⋯` for Start / Blocked / Needs info /
+  Reassign / Details. `✓` asks for confirmation first. Taps edit the message
+  in place, so the screen reflects the change immediately, and Back restores
+  what an overlay covered.
 - **Notifications** — assignment, reassignment, status changes and comments
   DM the other party immediately; the daily digest is the backstop, not the
   only channel.

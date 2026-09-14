@@ -22,18 +22,27 @@ import { decodeAction } from './telegram/actions.ts';
 
 const DB_PATH = process.env.FAMTASK_DB ?? 'famtask.local.sqlite';
 
+// Message ids the CLI hands out so that recorded views, and therefore
+// button taps, work the same way here as they do over Telegram.
+let nextMessageId = 1;
+
 const consoleChannel: MessagingChannel = {
   async send(message) {
-    console.log(`\n--- to ${message.chatId} ---\n${message.text}`);
+    const id = String(nextMessageId++);
+    console.log(`\n--- to ${message.chatId} (msg ${id}) ---\n${message.text}`);
     for (const row of message.buttons ?? []) {
       console.log(`   [ ${row.map((b) => `${b.label} -> ${encodeAction(b.action)}`).join(' | ')} ]`);
     }
+    return id;
   },
   async acknowledge(_token, text) {
     if (text) console.log(`(toast) ${text}`);
   },
   async update(chatId, messageId, message) {
     console.log(`\n--- edit ${chatId}/${messageId} ---\n${message.text}`);
+    for (const row of message.buttons ?? []) {
+      console.log(`   [ ${row.map((b) => `${b.label} -> ${encodeAction(b.action)}`).join(' | ')} ]`);
+    }
   },
 };
 

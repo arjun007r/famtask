@@ -278,6 +278,18 @@ export interface TaskFilter {
   limit?: number;
 }
 
+/** Fetch specific tasks in the order asked for, silently skipping any that
+ *  have since been deleted. Used to redraw a message from its recorded view. */
+export async function tasksByIds(db: Db, ids: string[]): Promise<TaskView[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.all<TaskView>(
+    `${VIEW_SELECT} WHERE t.id IN (${ids.map(() => '?').join(', ')})`,
+    ids,
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)).filter((t): t is TaskView => Boolean(t));
+}
+
 export async function queryTasks(db: Db, filter: TaskFilter): Promise<TaskView[]> {
   const where = ['t.family_id = ?'];
   const params: SqlParam[] = [filter.familyId];

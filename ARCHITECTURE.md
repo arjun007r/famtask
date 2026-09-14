@@ -239,9 +239,41 @@ Nobody is notified about their own action, and anyone whose DM chat the bot
 has not seen yet is skipped rather than failing the whole update.
 
 A digest is the member's top 5 incomplete tasks across their digest lists,
-labelled by list, with one-tap ✓/▶ buttons — plus up to 3 unclaimed
-group tasks with Claim buttons. Unclaimed work is also posted once a day to
-the family group chat, so it is visible in both places until someone takes it.
+labelled by list — plus up to 3 unclaimed group tasks. Unclaimed work is also
+posted once a day to the family group chat, so it is visible in both places
+until someone takes it.
+
+## Buttons
+
+Every task listing — digest, group board, `/tasks` — is rendered by one
+function, `renderBoard()`. Each open task gets two buttons: the action people
+take most (`✓` to finish, `🙋 Claim` if nobody owns it) and `⋯`, which opens
+that task's full action set: Start, Blocked, Needs info, Reassign, Details.
+Two buttons per row keeps a five-task digest readable on a phone; the rest
+lives one tap away.
+
+`✓` does not finish anything. It opens a confirmation, because a mis-tap in
+front of the family is awkward to walk back. Every other action applies
+immediately.
+
+### Views
+
+A tap arrives carrying a message id and nothing else, so the engine records
+what each message is showing when it sends it — a `View`, in
+`src/core/services/views.ts`, kept in `app_state` under `view:<chat>:<message>`.
+On every tap the engine replays that view against live rows and edits the
+message in place. Two things follow:
+
+- The screen changes the moment you tap. A finished task ticks over to `✓`
+  where it sits; a claimed task moves out of "up for grabs" into the numbered
+  list. A toast alone is not feedback — it disappears.
+- Overlays (menu, confirm, reassign, detail) nest the view they cover, so
+  Back and Cancel restore exactly what was underneath, and applying an action
+  returns to the listing rather than to a menu for a task that is now done.
+
+Views are swept after three days on the scheduled run; Telegram refuses to
+edit a message older than 48 hours anyway. A tap on a message with no
+recorded view still works — it applies and replies with a fresh message.
 
 ## Scheduling
 
@@ -432,8 +464,8 @@ transferred.
 - **Digest rotation.** The `timesShown` penalty is a guess at the right feel.
   If a stale task keeps reappearing, raise the coefficient; if things vanish
   too fast, lower it.
-- **Reopening a `done` task from a button.** Currently only possible by
-  message. Fine for now.
+- **Reopening a `done` task from a button.** A finished task keeps its line
+  and offers Details, but reopening it still takes a message. Fine for now.
 - **`task_events` growth.** Unbounded. Irrelevant at family scale; would need
   pruning if this ever grew.
 - **No per-member permissions.** Any member can act on any task in a list

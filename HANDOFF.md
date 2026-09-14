@@ -44,10 +44,12 @@ unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
 schedule with the agent's intro line, the OVERDUE marker and due-date
 priority escalation all correct on its first real run.
 
-**Verified by tests:** 66 unit tests — state machine, ranking, due-date
+**Verified by tests:** 74 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec,
-the strict-schema invariants, the one-way mirror, and line formatting.
+the strict-schema invariants, the one-way mirror, line formatting, and the
+button flow (confirm-before-done, the ⋯ menu, reassignment, in-place
+redraw, and taps on messages with no recorded view).
 
 **Measured:** parse quality, over 33 eval cases.
 
@@ -60,6 +62,11 @@ Equivalent on everything that changes behaviour, at a fifth of the price —
 Haiku is the recommendation. Full history and causes in
 `evals/baseline.json`; re-run both before changing the parser prompt or
 schema.
+
+**Buttons are interactive as of 14 Sep 2026** — taps edit the message in
+place rather than only firing a toast, `✓` confirms before finishing, and
+every task carries a `⋯` menu with Blocked, Needs info and Reassign. The
+reassign picker has never been used against a second real member.
 
 **Never run with two people.** Every task so far is Arjun's. Nothing has
 exercised the notification path (assignee told immediately) or the bounce

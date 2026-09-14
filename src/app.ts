@@ -9,18 +9,32 @@ import { AgentUnavailableError } from './agents/client.ts';
 import { planDigest, applyPlan } from './agents/digest-writer.ts';
 import { parseMessage } from './agents/parser.ts';
 import {
-  renderDigest,
+  digestFooter,
+  digestPreamble,
+  renderAssignPicker,
+  renderBoard,
+  renderConfirmDone,
   renderDigestListPicker,
   renderGroupBoard,
   renderTaskDetail,
   renderTaskList,
+  renderTaskMenu,
 } from './channel/format.ts';
 import type {
   InboundAction,
   InboundMessage,
   MessagingChannel,
+  OutboundMessage,
   RenderedMessage,
 } from './channel/types.ts';
+import {
+  overlay,
+  pruneViews,
+  recallView,
+  rememberView,
+  rootOf,
+  type View,
+} from './core/services/views.ts';
 import type { Db } from './core/db/adapter.ts';
 import { reconcile } from './core/services/sync.ts';
 import type { SyncTarget } from './sync/types.ts';
@@ -55,7 +69,16 @@ import {
   updateMemberPrefs,
 } from './core/services/registry.ts';
 import { claimOnce } from './core/services/state.ts';
-import { claim, createTask, getTaskView, getThread, queryTasks, setState } from './core/services/tasks.ts';
+import {
+  assign,
+  claim,
+  createTask,
+  getTaskView,
+  getThread,
+  queryTasks,
+  setState,
+  tasksByIds,
+} from './core/services/tasks.ts';
 import type { FamilyMember } from './core/types.ts';
 
 export interface AppDeps {
@@ -70,6 +93,10 @@ export interface AppDeps {
 }
 
 const now = (deps: AppDeps) => deps.now?.() ?? new Date();
+
+/** Telegram refuses to edit messages older than 48 hours, so a view outlives
+ *  its usefulness well before this. */
+const VIEW_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessage): Promise<void> {
   const { db } = deps;
@@ -241,10 +268,16 @@ async function deliver(
     const member = await getMember(deps.db, note.memberId).catch(() => null);
     // Skip anyone with no DM open yet, and anyone already looking at this chat.
     if (!member?.telegram_chat_id || member.telegram_chat_id === originChatId) continue;
-    await deps.channel.send({ chatId: member.telegram_chat_id, ...note.message });
+    await sendMessage(deps, { chatId: member.telegram_chat_id, ...note.message });
   }
 }
 
+/**
+ * A button tap. Every path ends the same way: apply whatever the tap meant,
+ * then redraw the message it came from so the screen agrees with the
+ * database. Finishing a task is the exception -- it opens a confirmation
+ * first, because undoing it in front of the family is awkward.
+ */
 export async function handleInboundAction(deps: AppDeps, inbound: InboundAction): Promise<void> {
   const { db, channel } = deps;
   const member = await getMemberByTelegramUserId(db, inbound.userId);
@@ -254,58 +287,209 @@ export async function handleInboundAction(deps: AppDeps, inbound: InboundAction)
   }
 
   const act = inbound.action;
+  const current = await recallView(db, inbound.chatId, inbound.messageId);
+
   try {
-    switch (act.kind) {
-      case 'task_done': {
-        await setState(db, act.taskId, 'done', member.id);
-        const task = await getTaskView(db, act.taskId);
-        await channel.acknowledge(inbound.ackToken, `Done: ${task.title}`);
-        return;
-      }
-      case 'task_start': {
-        await setState(db, act.taskId, 'in_progress', member.id);
-        const task = await getTaskView(db, act.taskId);
-        await channel.acknowledge(inbound.ackToken, `Started: ${task.title}`);
-        return;
-      }
-      case 'task_block': {
-        await setState(db, act.taskId, 'blocked', member.id);
-        const task = await getTaskView(db, act.taskId);
-        await channel.acknowledge(inbound.ackToken, `Blocked: ${task.title}`);
-        return;
-      }
-      case 'task_claim': {
-        await claim(db, act.taskId, member.id);
-        const task = await getTaskView(db, act.taskId);
-        await channel.acknowledge(inbound.ackToken, `Yours: ${task.title}`);
-        await channel.send({ chatId: inbound.chatId, text: `${member.name} claimed "${task.title}".` });
-        return;
-      }
-      case 'task_show': {
-        await channel.acknowledge(inbound.ackToken);
-        await channel.send({ chatId: inbound.chatId, ...(await taskDetail(db, act.taskId, member)) });
-        return;
-      }
-      case 'digest_list_toggle': {
-        const { atCap } = await toggleDigestList(db, member, act.listId);
-        await channel.acknowledge(
-          inbound.ackToken,
-          atCap ? `Already at ${MAX_DIGEST_LISTS} — untick one first.` : undefined,
-        );
-        if (!atCap && channel.update) {
-          await channel.update(inbound.chatId, inbound.messageId, await digestListPicker(db, member));
-        }
-        return;
-      }
-      default:
-        await channel.acknowledge(inbound.ackToken);
+    const outcome = await applyAction(deps, member, act, current, inbound.chatId);
+    await channel.acknowledge(inbound.ackToken, outcome.toast);
+    if (outcome.next) {
+      await redraw(deps, inbound.chatId, inbound.messageId, outcome.next, member);
+    }
+    for (const message of outcome.send ?? []) {
+      await sendMessage(deps, { chatId: inbound.chatId, ...message });
     }
   } catch (err) {
     if (err instanceof UserError) {
       await channel.acknowledge(inbound.ackToken, err.message);
+      // The rule that rejected the tap usually means the row moved under it,
+      // so redraw anyway rather than leaving a stale screen.
+      if (current) await redraw(deps, inbound.chatId, inbound.messageId, rootOf(current), member);
       return;
     }
     throw err;
+  }
+}
+
+interface ActionOutcome {
+  toast?: string;
+  /** What the tapped message should show next. Absent leaves it alone. */
+  next?: View;
+  /** Anything that belongs in the chat rather than in the tapped message. */
+  send?: RenderedMessage[];
+}
+
+async function applyAction(
+  deps: AppDeps,
+  member: FamilyMember,
+  act: InboundAction['action'],
+  current: View | null,
+  chatId: string,
+): Promise<ActionOutcome> {
+  const { db } = deps;
+
+  switch (act.kind) {
+    case 'task_done': {
+      const task = await getTaskView(db, act.taskId);
+      return { next: overlay(current, { k: 'confirm', id: task.id }) };
+    }
+    case 'task_done_confirm': {
+      await setState(db, act.taskId, 'done', member.id);
+      const task = await getTaskView(db, act.taskId);
+      return { toast: `Done: ${task.title}`, next: back(current) };
+    }
+    case 'task_start': {
+      await setState(db, act.taskId, 'in_progress', member.id);
+      const task = await getTaskView(db, act.taskId);
+      return { toast: `Started: ${task.title}`, next: back(current) };
+    }
+    case 'task_block': {
+      await setState(db, act.taskId, 'blocked', member.id);
+      const task = await getTaskView(db, act.taskId);
+      return { toast: `Blocked: ${task.title}`, next: back(current) };
+    }
+    case 'task_ask': {
+      await setState(db, act.taskId, 'needs_clarification', member.id);
+      const task = await getTaskView(db, act.taskId);
+      return { toast: `Flagged for clarification: ${task.title}`, next: back(current) };
+    }
+    case 'task_claim': {
+      await claim(db, act.taskId, member.id);
+      const task = await getTaskView(db, act.taskId);
+      return {
+        toast: `Yours: ${task.title}`,
+        next: back(current),
+        send: [{ text: `${member.name} claimed "${task.title}".` }],
+      };
+    }
+    case 'task_menu':
+      return { next: overlay(current, { k: 'menu', id: act.taskId }) };
+    case 'task_reassign':
+      return { next: overlay(current, { k: 'assign', id: act.taskId }) };
+    case 'task_assign': {
+      const target =
+        act.to === 'group'
+          ? ({ kind: 'group' as const, memberId: null })
+          : ({ kind: 'member' as const, memberId: act.to });
+      await assign(db, act.taskId, target, member.id);
+      const task = await getTaskView(db, act.taskId);
+      const owner = act.to === 'group' ? 'the family' : (await getMember(db, act.to)).name;
+      // The new owner is not necessarily reading this chat.
+      await notifyOwner(deps, task.id, act.to, member, chatId);
+      return { toast: `Now with ${owner}: ${task.title}`, next: back(current) };
+    }
+    case 'task_show':
+      return { next: overlay(current, { k: 'detail', id: act.taskId }) };
+    case 'view_back':
+      return { next: current ? back(current) : undefined };
+    case 'digest_list_toggle': {
+      const { atCap } = await toggleDigestList(db, member, act.listId);
+      return {
+        toast: atCap ? `Already at ${MAX_DIGEST_LISTS} — untick one first.` : undefined,
+        ...(atCap ? {} : { next: { k: 'lists' as const } }),
+      };
+    }
+    default:
+      return {};
+  }
+}
+
+/** DM the person a task just landed on, unless they are in this chat. */
+async function notifyOwner(
+  deps: AppDeps,
+  taskId: string,
+  to: string,
+  actor: FamilyMember,
+  originChatId: string,
+): Promise<void> {
+  if (to === 'group' || to === actor.id) return;
+  const task = await getTaskView(deps.db, taskId);
+  const owner = await getMember(deps.db, to).catch(() => null);
+  if (!owner?.telegram_chat_id || owner.telegram_chat_id === originChatId) return;
+  await sendMessage(deps, {
+    chatId: owner.telegram_chat_id,
+    text: `${actor.name} passed you "${task.title}".`,
+  });
+}
+
+/** Unwind an overlay. Applying an action returns to the listing it started
+ *  from, not to the menu, which would be a dead end on a finished task. */
+function back(current: View | null): View | undefined {
+  if (!current) return undefined;
+  return rootOf(current);
+}
+
+/** Redraw a message in place, falling back to a fresh message when the
+ *  channel cannot edit or Telegram refuses (messages go uneditable with age). */
+async function redraw(
+  deps: AppDeps,
+  chatId: string,
+  messageId: string,
+  view: View,
+  member: FamilyMember,
+): Promise<void> {
+  const message = await renderView(deps, view, member);
+  if (deps.channel.update) {
+    try {
+      await deps.channel.update(chatId, messageId, message);
+      await rememberView(deps.db, chatId, messageId, view);
+      return;
+    } catch (err) {
+      console.error('in-place redraw failed, sending a fresh message', err);
+    }
+  }
+  // `view`, not `message.view`: only the former carries the overlay stack.
+  await sendMessage(deps, { chatId, ...message, view });
+}
+
+/** Rebuild a recorded view from live rows. */
+async function renderView(
+  deps: AppDeps,
+  view: View,
+  member: FamilyMember,
+): Promise<RenderedMessage> {
+  const { db } = deps;
+  const at = now(deps);
+  switch (view.k) {
+    case 'board': {
+      const tasks = await tasksByIds(db, view.ids);
+      const claimables = await tasksByIds(db, view.claimIds);
+      // Claiming one moves it out of "up for grabs" and into the numbered
+      // list, which is the visible half of what claiming means.
+      const taken = claimables.filter((t) => t.assignee_kind === 'member');
+      const stillOpen = claimables.filter((t) => t.assignee_kind !== 'member');
+      return renderBoard(
+        {
+          preamble: view.preamble,
+          tasks: [...tasks, ...taken],
+          unclaimed: stillOpen,
+          ...(view.footer ? { footer: view.footer } : {}),
+        },
+        at,
+      );
+    }
+    case 'lists':
+      return digestListPicker(db, member);
+    case 'detail':
+      return taskDetail(db, view.id, member);
+    case 'menu':
+      return renderTaskMenu(await getTaskView(db, view.id), at);
+    case 'confirm':
+      return renderConfirmDone(await getTaskView(db, view.id), at);
+    case 'assign':
+      return renderAssignPicker(
+        await getTaskView(db, view.id),
+        await listMembers(db, member.family_id),
+        at,
+      );
+  }
+}
+
+/** Every outbound message goes through here so that anything interactive is
+ *  recorded and can be redrawn when one of its buttons is tapped. */
+async function sendMessage(deps: AppDeps, message: OutboundMessage): Promise<void> {
+  const messageId = await deps.channel.send(message);
+  if (messageId && message.view) {
+    await rememberView(deps.db, message.chatId, messageId, message.view);
   }
 }
 
@@ -316,7 +500,7 @@ export async function handleGroupMembership(
   const family = await ensureFamily(deps.db);
   await setGroupChat(deps.db, family.id, event.joined ? event.chatId : null);
   if (event.joined) {
-    await deps.channel.send({
+    await sendMessage(deps, {
       chatId: event.chatId,
       text: "I'll keep the family's shared tasks here. Unclaimed ones get posted each morning — tap to claim.",
     });
@@ -356,12 +540,16 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
       }
     }
 
-    const rendered = renderDigest({ ...digest, items });
-    await channel.send({
-      chatId: member.telegram_chat_id!,
-      ...rendered,
-      text: intro ? `${intro}\n\n${stripFirstLine(rendered.text)}` : rendered.text,
-    });
+    const rendered = renderBoard(
+      {
+        preamble: intro || digestPreamble(digest),
+        tasks: items,
+        unclaimed: digest.unclaimed,
+        footer: digestFooter(digest),
+      },
+      at,
+    );
+    await sendMessage(deps, { chatId: member.telegram_chat_id!, ...rendered });
     await recordDigestSends(
       db,
       member.id,
@@ -370,6 +558,11 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
     );
     sent += 1;
   }
+
+  // Yesterday's digest has scrolled away; its recorded view is dead weight.
+  await pruneViews(db, new Date(at.getTime() - VIEW_TTL_MS).toISOString()).catch((err) =>
+    console.error('view prune failed', err),
+  );
 
   if (deps.sync) {
     await reconcile(deps.db, deps.sync, family.id, { now: at }).catch((err) =>
@@ -382,7 +575,7 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
     if (await claimOnce(db, `group_board:${family.id}`, stamp)) {
       const board = await buildGroupBoard(db, family.id, { now: at });
       if (board.length > 0) {
-        await channel.send({ chatId: family.group_chat_id, ...renderGroupBoard(board) });
+        await sendMessage(deps, { chatId: family.group_chat_id, ...renderGroupBoard(board, at) });
       }
     }
   }
@@ -560,7 +753,7 @@ async function reply(
   inbound: InboundMessage,
   message: RenderedMessage,
 ): Promise<void> {
-  await deps.channel.send({
+  await sendMessage(deps, {
     chatId: inbound.chatId,
     ...message,
     ...(inbound.chatType === 'group' ? { replyToMessageId: inbound.messageId } : {}),
@@ -577,7 +770,3 @@ export function looksActionable(text: string): boolean {
   );
 }
 
-function stripFirstLine(text: string): string {
-  const idx = text.indexOf('\n');
-  return idx === -1 ? text : text.slice(idx + 1).replace(/^\n/, '');
-}
