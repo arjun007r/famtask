@@ -31,6 +31,7 @@ import { applyParsed, matchTask, type InboxContext } from '../src/core/services/
 import { answerQuery } from '../src/core/services/queries.ts';
 import { reconcile, shapeHash } from '../src/core/services/sync.ts';
 import { sanitize } from '../src/agents/digest-writer.ts';
+import { taskLine, multipleLists } from '../src/channel/format.ts';
 import { TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
@@ -971,5 +972,46 @@ describe('one-way mirror', () => {
     assert.notEqual(shapeHash(base), shapeHash({ ...base, title: 'B' }));
     assert.notEqual(shapeHash(base), shapeHash({ ...base, assigneeName: 'Priya' }));
     assert.notEqual(shapeHash(base), shapeHash({ ...base, closed: true }));
+  });
+});
+
+
+describe('task lines say who and where, only when it helps', () => {
+  const task = (over: Partial<TaskView>): TaskView =>
+    ({
+      id: 't1', title: 'Pick up birthday gift', description: null, list_name: 'Family',
+      assignee_kind: 'member', assignee_name: 'Arjun', assigned_to: 'mem_1',
+      state: 'todo', priority: 'medium', due_at: null, created_at: '2026-09-01T00:00:00Z',
+      ...over,
+    }) as TaskView;
+
+  it('drops the list tag when every task is in the same list', () => {
+    // It reads as an assignee, and repeated on every line it says nothing.
+    const one = [task({}), task({ id: 't2' })];
+    assert.equal(multipleLists(one), false);
+    assert.ok(!taskLine(one[0]!, { showList: multipleLists(one) }).includes('[Family]'));
+
+    const two = [task({}), task({ id: 't2', list_name: 'Business' })];
+    assert.equal(multipleLists(two), true);
+    assert.ok(taskLine(two[0]!, { showList: multipleLists(two) }).includes('[Family]'));
+  });
+
+  it('names the owner where the tasks are not all the reader\'s', () => {
+    assert.ok(taskLine(task({}), { showAssignee: true }).endsWith('— Arjun'));
+    // In a personal digest every task is theirs, so the name is noise.
+    assert.ok(!taskLine(task({}), { showAssignee: false }).includes('Arjun'));
+  });
+
+  it('still flags work nobody owns, however it is asked for', () => {
+    for (const showAssignee of [true, false]) {
+      assert.ok(
+        taskLine(task({ assignee_kind: 'group', assignee_name: null }), { showAssignee })
+          .includes('up for grabs'),
+      );
+      assert.ok(
+        taskLine(task({ assignee_kind: 'unassigned', assignee_name: null }), { showAssignee })
+          .includes('unassigned'),
+      );
+    }
   });
 });

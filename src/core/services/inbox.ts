@@ -154,6 +154,7 @@ async function createFromParsed(
     reply: renderTaskList(
       created.length === 1 ? 'Added:' : `Added ${created.length} tasks:`,
       created,
+      { showAssignee: true },
     ),
     notify,
   };
@@ -273,7 +274,8 @@ async function notFound(
   const lines = [hint ? `I can't find a task matching "${hint}".` : "I'm not sure which task you mean."];
   if (open.length > 0) {
     lines.push('', 'Open right now:');
-    open.forEach((t) => lines.push(taskLine(t)));
+    const showList = new Set(open.map((t) => t.list_name)).size > 1;
+    open.forEach((t) => lines.push(taskLine(t, { showList, showAssignee: true })));
   }
   return { text: lines.join('\n') };
 }

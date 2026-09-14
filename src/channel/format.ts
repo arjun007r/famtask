@@ -14,8 +14,18 @@ const STATE_MARK: Record<string, string> = {
   cancelled: '✕',
 };
 
-export function taskLine(task: TaskView, index?: number, now: Date = new Date()): string {
-  const n = index === undefined ? '' : `${index}. `;
+export interface LineOptions {
+  index?: number;
+  now?: Date;
+  /** Only worth printing when more than one list is on screen. */
+  showList?: boolean;
+  /** Only worth printing where the tasks are not all the reader's own. */
+  showAssignee?: boolean;
+}
+
+export function taskLine(task: TaskView, opts: LineOptions = {}): string {
+  const now = opts.now ?? new Date();
+  const n = opts.index === undefined ? '' : `${opts.index}. `;
   const mark = STATE_MARK[task.state] ?? '○';
   // Escalated by the deadline, not by whatever was set when it was written.
   const pri = PRIORITY_MARK[effectivePriority(task, now)] ?? '';
@@ -26,12 +36,21 @@ export function taskLine(task: TaskView, index?: number, now: Date = new Date())
       : ` (due ${shortDate(task.due_at)})`
     : '';
   const owner =
-    task.assignee_kind === 'member'
-      ? ''
-      : task.assignee_kind === 'group'
-        ? ' — up for grabs'
-        : ' — unassigned';
-  return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due} [${task.list_name}]${owner}`.trim();
+    task.assignee_kind === 'group'
+      ? ' — up for grabs'
+      : task.assignee_kind === 'unassigned'
+        ? ' — unassigned'
+        : opts.showAssignee && task.assignee_name
+          ? ` — ${firstName(task.assignee_name)}`
+          : '';
+  const list = opts.showList ? ` [${task.list_name}]` : '';
+  return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due}${list}${owner}`.trim();
+}
+
+/** A list tag on every line when there is only one list is noise, and it
+ *  reads as an assignee. */
+export function multipleLists(tasks: TaskView[]): boolean {
+  return new Set(tasks.map((t) => t.list_name)).size > 1;
 }
 
 export function renderDigest(digest: Digest): RenderedMessage {
@@ -41,7 +60,8 @@ export function renderDigest(digest: Digest): RenderedMessage {
   if (items.length === 0) {
     lines.push('Nothing assigned to you right now. 🎉');
   } else {
-    items.forEach((t, i) => lines.push(taskLine(t, i + 1)));
+    const showList = multipleLists([...items, ...unclaimed]);
+    items.forEach((t, i) => lines.push(taskLine(t, { index: i + 1, showList })));
   }
 
   if (unclaimed.length > 0) {
@@ -76,7 +96,8 @@ export function renderGroupBoard(tasks: TaskView[]): RenderedMessage {
     return { text: 'No unclaimed family tasks right now. ✨' };
   }
   const lines = ['Up for grabs — tap to claim:', ''];
-  tasks.forEach((t, i) => lines.push(taskLine(t, i + 1)));
+  const showList = multipleLists(tasks);
+  tasks.forEach((t, i) => lines.push(taskLine(t, { index: i + 1, showList })));
   return {
     text: lines.join('\n'),
     buttons: tasks.map((t) => [
@@ -85,10 +106,17 @@ export function renderGroupBoard(tasks: TaskView[]): RenderedMessage {
   };
 }
 
-export function renderTaskList(title: string, tasks: TaskView[]): RenderedMessage {
+export function renderTaskList(
+  title: string,
+  tasks: TaskView[],
+  opts: { showAssignee?: boolean } = {},
+): RenderedMessage {
   if (tasks.length === 0) return { text: `${title}\n\nNothing here.` };
   const lines = [title, ''];
-  tasks.forEach((t, i) => lines.push(taskLine(t, i + 1)));
+  const showList = multipleLists(tasks);
+  tasks.forEach((t, i) =>
+    lines.push(taskLine(t, { index: i + 1, showList, showAssignee: opts.showAssignee })),
+  );
   return {
     text: lines.join('\n'),
     buttons: tasks

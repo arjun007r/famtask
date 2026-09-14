@@ -34,7 +34,9 @@ export async function answerQuery(
         listIds: visible.map((l) => l.id),
         search: query.search ?? undefined,
       });
-      return renderTaskList('Everything open:', rankTasks(tasks).slice(0, query.limit ?? 25));
+      return renderTaskList('Everything open:', rankTasks(tasks).slice(0, query.limit ?? 25), {
+        showAssignee: true,
+      });
     }
     case 'next': {
       const tasks = await rankedFor(db, asker, asker.id, query.search);
@@ -66,7 +68,9 @@ export async function answerQuery(
         return { text: `No list called "${query.list}". Lists: ${lists.map((l) => l.name).join(', ') || 'none yet'}` };
       }
       const tasks = await queryTasks(db, { familyId, listIds: [list.id], search: query.search ?? undefined });
-      return renderTaskList(`${list.name}:`, rankTasks(tasks).slice(0, limit));
+      return renderTaskList(`${list.name}:`, rankTasks(tasks).slice(0, limit), {
+        showAssignee: true,
+      });
     }
     case 'unclaimed': {
       const tasks = await queryTasks(db, { familyId, unclaimedOnly: true, search: query.search ?? undefined });
