@@ -133,7 +133,7 @@ prefixed uuids (`tsk_…`, `mem_…`), timestamps are ISO-8601 UTC strings.
 | Table | Purpose |
 |---|---|
 | `families` | The workspace. One row today. Holds `group_chat_id`. |
-| `family_members` | Registry: name, `telegram_user_id`, DM chat id, timezone, digest hour. |
+| `family_members` | Registry: name, `channel` + `channel_user_id`, DM chat id, timezone, digest hour. |
 | `lists` | Named lists. `owner_member_id NULL` = shared with the family. |
 | `member_digest_lists` | Each person's pick of ≤3 lists for their daily digest. |
 | `tasks` | The task itself, incl. `family_id`, `list_id`, state, priority, `waiting_on`, `source_chat_id`/`source_message_id`. |
@@ -149,6 +149,33 @@ Two invariants enforced in SQL rather than trusted to callers:
 `family_id` is on tasks, lists, and members. It is always one value today.
 It exists so a second family is a migration-free change; nothing else in the
 codebase concedes anything to multi-tenancy.
+
+## One family, more than one messaging app
+
+Two people in a household can refuse to share an app and still share a task
+list. `family_members.channel` names which one reaches each person; ids are
+only unique within a channel, so `(channel, channel_user_id)` is the key.
+
+`AppDeps` carries both `channel` — the one the current update arrived on, and
+the default for every reply — and `channels`, a map of every adapter this
+deployment has. A reply needs only the first. A digest run needs the second:
+one cron tick has to reach everybody, long after the inbound channel stopped
+being relevant. `addressOf(member)` returns the `(channel, chatId)` pair and
+`sendMessage()` routes on it.
+
+A member whose channel has no adapter wired up is **skipped with a log line**,
+never a thrown error. Mid-rollout, half the family working is the correct
+behaviour; a cron that dies because one adapter is missing is not.
+
+Adding an app is `src/<app>/` implementing `MessagingChannel`, plus one line
+in `buildChannels()`. Nothing above the channel boundary changes — which is
+what that boundary was for.
+
+Channels differ in what they can do, and the interface says so rather than
+pretending otherwise: `update()` is optional, so a channel that cannot edit a
+sent message (WhatsApp's Cloud API, SMS) falls back to posting a fresh one,
+and a channel with no buttons at all simply ignores `buttons`. The engine
+degrades; it does not branch.
 
 ## Waiting on someone outside the family
 

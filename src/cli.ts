@@ -14,7 +14,7 @@ import { handleInboundAction, handleInboundMessage, runScheduledDigests, type Ap
 import { AgentUnavailableError } from './agents/client.ts';
 import type { MessagingChannel } from './channel/types.ts';
 import { fileDb } from './core/db/sqlite.ts';
-import { addMember, ensureFamily, getMemberByTelegramUserId, listMembers } from './core/services/registry.ts';
+import { addMember, ensureFamily, getMemberByChannelId, listMembers } from './core/services/registry.ts';
 import { createList, resolveList } from './core/services/lists.ts';
 import { queryTasks } from './core/services/tasks.ts';
 import { encodeAction } from './telegram/actions.ts';
@@ -27,6 +27,8 @@ const DB_PATH = process.env.FAMTASK_DB ?? 'famtask.local.sqlite';
 let nextMessageId = 1;
 
 const consoleChannel: MessagingChannel = {
+  name: 'telegram',
+
   async send(message) {
     const id = String(nextMessageId++);
     console.log(`\n--- to ${message.chatId} (msg ${id}) ---\n${message.text}`);
@@ -71,21 +73,21 @@ async function main(): Promise<void> {
         await addMember(d.db, {
           familyId: family.id,
           name: 'Arjun',
-          telegramUserId: '1001',
-          telegramChatId: '1001',
+          channelUserId: '1001',
+          channelChatId: '1001',
           timezone: 'UTC',
         });
         await addMember(d.db, {
           familyId: family.id,
           name: 'Preethi',
-          telegramUserId: '1002',
-          telegramChatId: '1002',
+          channelUserId: '1002',
+          channelChatId: '1002',
           timezone: 'UTC',
         });
         await resolveList(d.db, family.id, null);
         await createList(d.db, { familyId: family.id, name: 'Business' });
       }
-      console.log('Seeded. Members:', (await listMembers(d.db, family.id)).map((m) => `${m.name}=${m.telegram_user_id}`).join(', '));
+      console.log('Seeded. Members:', (await listMembers(d.db, family.id)).map((m) => `${m.name}=${m.channel_user_id}`).join(', '));
       return;
     }
 
@@ -94,7 +96,7 @@ async function main(): Promise<void> {
       const [userId, ...textParts] = args;
       if (!userId || textParts.length === 0) throw new Error(`usage: ${command} <telegramUserId> <text>`);
       const d = deps();
-      const member = await getMemberByTelegramUserId(d.db, userId);
+      const member = await getMemberByChannelId(d.db, 'telegram', userId);
       await handleInboundMessage(d, {
         chatId: command === 'group' ? '-500' : userId,
         chatType: command === 'group' ? 'group' : 'dm',
@@ -111,7 +113,7 @@ async function main(): Promise<void> {
       const [userId, data] = args;
       if (!userId || !data) throw new Error('usage: tap <telegramUserId> <callback data>');
       const d = deps();
-      const member = await getMemberByTelegramUserId(d.db, userId);
+      const member = await getMemberByChannelId(d.db, 'telegram', userId);
       await handleInboundAction(d, {
         chatId: userId,
         chatType: 'dm',

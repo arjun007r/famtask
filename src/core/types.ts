@@ -24,8 +24,12 @@ export interface FamilyMember {
   id: string;
   family_id: string;
   name: string;
-  telegram_user_id: string;
-  telegram_chat_id: string | null;
+  /** Which messaging channel reaches this person: 'telegram', 'whatsapp', … */
+  channel: string;
+  channel_user_id: string;
+  /** DM conversation id, learned the first time they message the bot. Until
+   *  it is set the member cannot receive a digest. */
+  channel_chat_id: string | null;
   timezone: string;
   digest_hour: number;
   is_active: number;

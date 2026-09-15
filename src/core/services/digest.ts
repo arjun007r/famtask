@@ -109,7 +109,7 @@ export async function buildGroupBoard(
  *  per-person digest times work off a single trigger. */
 export function membersDueNow(members: FamilyMember[], now: Date): FamilyMember[] {
   return members.filter(
-    (m) => m.telegram_chat_id && localHour(m.timezone, now) === m.digest_hour,
+    (m) => m.channel_chat_id && localHour(m.timezone, now) === m.digest_hour,
   );
 }
 

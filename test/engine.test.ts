@@ -9,7 +9,12 @@ import {
   effectivePriority,
   timingOf,
 } from '../src/core/priority.ts';
-import { addMember, ensureFamily, matchMemberByName } from '../src/core/services/registry.ts';
+import {
+  addMember,
+  ensureFamily,
+  matchMemberByName,
+  updateMemberPrefs,
+} from '../src/core/services/registry.ts';
 import {
   createList,
   digestListsFor,
@@ -45,6 +50,7 @@ import {
   handleInboundAction,
   handleInboundMessage,
   looksActionable,
+  runScheduledDigests,
   type AppDeps,
 } from '../src/app.ts';
 import { describeAgentFailure, supportsEffort } from '../src/agents/client.ts';
@@ -64,14 +70,14 @@ async function setup() {
   const arjun = await addMember(db, {
     familyId: family.id,
     name: 'Arjun',
-    telegramUserId: '1001',
-    telegramChatId: '1001',
+    channelUserId: '1001',
+    channelChatId: '1001',
   });
   const priya = await addMember(db, {
     familyId: family.id,
     name: 'Priya',
-    telegramUserId: '1002',
-    telegramChatId: '1002',
+    channelUserId: '1002',
+    channelChatId: '1002',
   });
   const home = await resolveList(db, family.id, null);
   return { db, familyId: family.id, arjun, priya, home };
@@ -333,7 +339,7 @@ describe('digest', () => {
   });
 
   it('skips members with no DM chat yet', () => {
-    const members = [{ ...env.arjun, telegram_chat_id: null, timezone: 'UTC', digest_hour: 9 }];
+    const members = [{ ...env.arjun, channel_chat_id: null, timezone: 'UTC', digest_hour: 9 }];
     assert.equal(membersDueNow(members, new Date('2026-09-09T09:00:00Z')).length, 0);
   });
 });
@@ -650,6 +656,7 @@ describe('agent outage', () => {
     return {
       sent,
       channel: {
+        name: 'telegram',
         async send(message) { sent.push(message); return String(sent.length); },
         async acknowledge() {},
       },
@@ -1037,6 +1044,7 @@ describe('button taps', () => {
     const edits: RenderedMessage[] = [];
     const toasts: (string | undefined)[] = [];
     const channel: MessagingChannel = {
+      name: 'telegram',
       async send(message) {
         sent.push(message);
         return String(sent.length);
@@ -1344,5 +1352,129 @@ describe('waiting on someone outside the family', () => {
       closed: false,
     };
     assert.notEqual(shapeHash(base), shapeHash({ ...base, waitingOn: 'the plumber' }));
+  });
+});
+
+describe('a family split across two messaging apps', () => {
+  /** Records what each adapter was asked to send. */
+  function adapter(name: string) {
+    const sent: OutboundMessage[] = [];
+    const channel: MessagingChannel = {
+      name,
+      async send(message) {
+        sent.push(message);
+        return `${name}-${sent.length}`;
+      },
+      async acknowledge() {},
+    };
+    return { channel, sent };
+  }
+
+  async function household() {
+    const { db } = memoryDb();
+    const family = await ensureFamily(db, 'Home');
+    const arjun = await addMember(db, {
+      familyId: family.id,
+      name: 'Arjun',
+      channel: 'telegram',
+      channelUserId: '1001',
+      channelChatId: '1001',
+    });
+    const preethi = await addMember(db, {
+      familyId: family.id,
+      name: 'Preethi',
+      channel: 'whatsapp',
+      channelUserId: '15550001111',
+      channelChatId: '15550001111',
+    });
+    for (const m of [arjun, preethi]) {
+      await updateMemberPrefs(db, m.id, { timezone: 'UTC', digestHour: 9 });
+    }
+    const home = await resolveList(db, family.id, null);
+    for (const [title, owner] of [['Fix the gate', arjun], ['Call the school', preethi]] as const) {
+      await createTask(db, {
+        familyId: family.id,
+        listId: home.id,
+        title,
+        createdBy: owner.id,
+        assigneeKind: 'member',
+        assignedTo: owner.id,
+      });
+    }
+    return { db, family, arjun, preethi };
+  }
+
+  const at9am = () => new Date('2026-09-16T09:00:00Z');
+
+  it('sends each person their digest on their own app, from one cron tick', async () => {
+    const home = await household();
+    const tg = adapter('telegram');
+    const wa = adapter('whatsapp');
+    const deps: AppDeps = {
+      db: home.db,
+      channel: tg.channel,
+      channels: { telegram: tg.channel, whatsapp: wa.channel },
+      anthropic: null,
+      now: at9am,
+    };
+
+    assert.equal(await runScheduledDigests(deps), 2);
+    assert.equal(tg.sent.length, 1);
+    assert.equal(wa.sent.length, 1);
+    assert.match(tg.sent[0]!.text, /Arjun/);
+    assert.equal(tg.sent[0]!.chatId, '1001');
+    assert.match(wa.sent[0]!.text, /Preethi/);
+    assert.equal(wa.sent[0]!.chatId, '15550001111');
+  });
+
+  it('keeps the tasks shared even though the two never share an app', async () => {
+    const home = await household();
+    const tg = adapter('telegram');
+    const wa = adapter('whatsapp');
+    const deps: AppDeps = {
+      db: home.db,
+      channel: tg.channel,
+      channels: { telegram: tg.channel, whatsapp: wa.channel },
+      anthropic: null,
+      now: at9am,
+    };
+    await runScheduledDigests(deps);
+    // Same family_id, same lists, one engine: the split is delivery only.
+    assert.match(wa.sent[0]!.text, /Call the school/);
+    assert.doesNotMatch(wa.sent[0]!.text, /Fix the gate/);
+  });
+
+  it('skips a member whose channel has no adapter rather than failing the run', async () => {
+    const home = await household();
+    const tg = adapter('telegram');
+    // WhatsApp deliberately not wired up, as it would be mid-rollout.
+    const deps: AppDeps = {
+      db: home.db,
+      channel: tg.channel,
+      channels: { telegram: tg.channel },
+      anthropic: null,
+      now: at9am,
+    };
+
+    await assert.doesNotReject(() => runScheduledDigests(deps));
+    assert.equal(tg.sent.length, 1, 'the wired-up half still gets its digest');
+  });
+
+  it('routes a reply back to the app the message came in on', async () => {
+    const home = await household();
+    const wa = adapter('whatsapp');
+    const deps: AppDeps = { db: home.db, channel: wa.channel, anthropic: null };
+
+    await handleInboundMessage(deps, {
+      chatId: '15550001111',
+      chatType: 'dm',
+      userId: '15550001111',
+      userDisplayName: 'Preethi',
+      text: '/tasks',
+      messageId: 'm1',
+      addressedToBot: true,
+    });
+    assert.equal(wa.sent.length, 1);
+    assert.match(wa.sent[0]!.text, /Call the school/);
   });
 });

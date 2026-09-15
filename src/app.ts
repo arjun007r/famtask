@@ -62,7 +62,7 @@ import {
   addMember,
   ensureFamily,
   getMember,
-  getMemberByTelegramUserId,
+  getMemberByChannelId,
   listMembers,
   rememberChatId,
   setGroupChat,
@@ -84,7 +84,15 @@ import type { FamilyMember } from './core/types.ts';
 
 export interface AppDeps {
   db: Db;
+  /** The channel this update arrived on, and the default for every reply. */
   channel: MessagingChannel;
+  /**
+   * Every channel the family can be reached on, keyed by name. Only needed
+   * when members are split across apps -- a digest run has to fan out to all
+   * of them from one cron tick, long after the inbound channel is irrelevant.
+   * Defaults to just `channel`.
+   */
+  channels?: Record<string, MessagingChannel>;
   /** Optional one-way mirror (Todoist). Absent means the feature is off. */
   sync?: SyncTarget | null;
   /** Absent means no agent layer: commands still work, free text does not. */
@@ -95,14 +103,28 @@ export interface AppDeps {
 
 const now = (deps: AppDeps) => deps.now?.() ?? new Date();
 
+/** The adapter that reaches a given channel, or null when this deployment
+ *  has none wired up. Null is a skipped delivery, never a crashed cron. */
+function channelFor(deps: AppDeps, name: string | undefined): MessagingChannel | null {
+  if (!name || name === deps.channel.name) return deps.channel;
+  return deps.channels?.[name] ?? null;
+}
+
+/** Where to reach a member, or null if they have never opened a DM. */
+function addressOf(member: FamilyMember): { channel: string; chatId: string } | null {
+  return member.channel_chat_id
+    ? { channel: member.channel, chatId: member.channel_chat_id }
+    : null;
+}
+
 /** Telegram refuses to edit messages older than 48 hours, so a view outlives
  *  its usefulness well before this. */
 const VIEW_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessage): Promise<void> {
-  const { db } = deps;
+  const { db, channel } = deps;
   const family = await ensureFamily(db);
-  let member = await getMemberByTelegramUserId(db, inbound.userId);
+  let member = await getMemberByChannelId(db, channel.name, inbound.userId);
 
   if (!member) {
     const existing = await listMembers(db, family.id);
@@ -111,8 +133,9 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
       member = await addMember(db, {
         familyId: family.id,
         name: inbound.userDisplayName,
-        telegramUserId: inbound.userId,
-        telegramChatId: inbound.chatId,
+        channel: channel.name,
+        channelUserId: inbound.userId,
+        channelChatId: inbound.chatId,
       });
       await resolveList(db, family.id, null);
       await reply(deps, inbound, {
@@ -139,9 +162,9 @@ export async function handleInboundMessage(deps: AppDeps, inbound: InboundMessag
     return;
   }
 
-  if (inbound.chatType === 'dm' && member.telegram_chat_id !== inbound.chatId) {
+  if (inbound.chatType === 'dm' && member.channel_chat_id !== inbound.chatId) {
     await rememberChatId(db, member.id, inbound.chatId);
-    member = { ...member, telegram_chat_id: inbound.chatId };
+    member = { ...member, channel_chat_id: inbound.chatId };
   }
 
   if (inbound.text.startsWith('/')) {
@@ -268,8 +291,9 @@ async function deliver(
   for (const note of notifications) {
     const member = await getMember(deps.db, note.memberId).catch(() => null);
     // Skip anyone with no DM open yet, and anyone already looking at this chat.
-    if (!member?.telegram_chat_id || member.telegram_chat_id === originChatId) continue;
-    await sendMessage(deps, { chatId: member.telegram_chat_id, ...note.message });
+    const to = member ? addressOf(member) : null;
+    if (!to || to.chatId === originChatId) continue;
+    await sendMessage(deps, { ...to, ...note.message });
   }
 }
 
@@ -281,7 +305,7 @@ async function deliver(
  */
 export async function handleInboundAction(deps: AppDeps, inbound: InboundAction): Promise<void> {
   const { db, channel } = deps;
-  const member = await getMemberByTelegramUserId(db, inbound.userId);
+  const member = await getMemberByChannelId(db, channel.name, inbound.userId);
   if (!member) {
     await channel.acknowledge(inbound.ackToken, "You're not in this family yet.");
     return;
@@ -410,9 +434,10 @@ async function notifyOwner(
   if (to === 'group' || to === actor.id) return;
   const task = await getTaskView(deps.db, taskId);
   const owner = await getMember(deps.db, to).catch(() => null);
-  if (!owner?.telegram_chat_id || owner.telegram_chat_id === originChatId) return;
+  const address = owner ? addressOf(owner) : null;
+  if (!address || address.chatId === originChatId) return;
   await sendMessage(deps, {
-    chatId: owner.telegram_chat_id,
+    ...address,
     text: `${actor.name} passed you "${task.title}".`,
   });
 }
@@ -493,7 +518,12 @@ async function renderView(
 /** Every outbound message goes through here so that anything interactive is
  *  recorded and can be redrawn when one of its buttons is tapped. */
 async function sendMessage(deps: AppDeps, message: OutboundMessage): Promise<void> {
-  const messageId = await deps.channel.send(message);
+  const channel = channelFor(deps, message.channel);
+  if (!channel) {
+    console.error(`no adapter for channel "${message.channel}" — message dropped`);
+    return;
+  }
+  const messageId = await channel.send(message);
   if (messageId && message.view) {
     await rememberView(deps.db, message.chatId, messageId, message.view);
   }
@@ -555,7 +585,7 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
       },
       at,
     );
-    await sendMessage(deps, { chatId: member.telegram_chat_id!, ...rendered });
+    await sendMessage(deps, { ...addressOf(member)!, ...rendered });
     await recordDigestSends(
       db,
       member.id,
@@ -690,18 +720,24 @@ async function runCommand(
       case '/members': {
         const members = await listMembers(db, member.family_id);
         return {
-          text: ['Family:', ...members.map((m) => `• ${m.name} (${m.telegram_user_id})`)].join('\n'),
+          text: [
+            'Family:',
+            ...members.map((m) => `• ${m.name} — ${m.channel} ${m.channel_user_id}`),
+          ].join('\n'),
         };
       }
 
       case '/adduser': {
         const [id, ...nameParts] = rest;
         const name = nameParts.join(' ').trim();
-        if (!id || !name) return { text: 'Usage: /adduser <telegram id> <name>' };
+        if (!id || !name) return { text: `Usage: /adduser <their ${member.channel} id> <name>` };
         const added = await addMember(db, {
           familyId: member.family_id,
           name,
-          telegramUserId: id,
+          // Whoever is adding them is on some channel; assume the same one
+          // unless they say otherwise by messaging the bot themselves.
+          channel: member.channel,
+          channelUserId: id,
           timezone: member.timezone,
         });
         return { text: `Added ${added.name}. They should message me so I can DM them.` };

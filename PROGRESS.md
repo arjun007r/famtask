@@ -34,6 +34,10 @@
   Reassign / Details. `✓` asks for confirmation first. Taps edit the message
   in place, so the screen reflects the change immediately, and Back restores
   what an overlay covered.
+- **Per-member channels** — `family_members.channel` routes each person to the
+  app that reaches them, so a family split across Telegram and WhatsApp still
+  shares one task list. One cron tick fans a digest out across all of them.
+  Only a channel adapter is missing for any new app.
 - **Waiting on outsiders** (`tasks.waiting_on`, `/waiting`) — work the family
   can only chase: contractors, offices, relatives. A family member still owns
   the chasing, so it never falls out of a digest. Free text by design; a guard

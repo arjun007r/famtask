@@ -31,21 +31,25 @@ export async function setGroupChat(db: Db, familyId: string, chatId: string | nu
 export interface AddMemberInput {
   familyId: string;
   name: string;
-  telegramUserId: string;
-  telegramChatId?: string | null;
+  /** Defaults to Telegram, which is the only channel that predates this field. */
+  channel?: string;
+  channelUserId: string;
+  channelChatId?: string | null;
   timezone?: string;
   digestHour?: number;
 }
 
 export async function addMember(db: Db, input: AddMemberInput): Promise<FamilyMember> {
-  const existing = await getMemberByTelegramUserId(db, input.telegramUserId);
+  const channel = input.channel ?? 'telegram';
+  const existing = await getMemberByChannelId(db, channel, input.channelUserId);
   if (existing) throw new UserError(`${existing.name} is already in the family.`);
   const member: FamilyMember = {
     id: newId('mem'),
     family_id: input.familyId,
     name: input.name,
-    telegram_user_id: input.telegramUserId,
-    telegram_chat_id: input.telegramChatId ?? null,
+    channel,
+    channel_user_id: input.channelUserId,
+    channel_chat_id: input.channelChatId ?? null,
     timezone: input.timezone ?? 'UTC',
     digest_hour: input.digestHour ?? 9,
     is_active: 1,
@@ -53,14 +57,15 @@ export async function addMember(db: Db, input: AddMemberInput): Promise<FamilyMe
   };
   await db.run(
     `INSERT INTO family_members
-       (id, family_id, name, telegram_user_id, telegram_chat_id, timezone, digest_hour, is_active, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+       (id, family_id, name, channel, channel_user_id, channel_chat_id, timezone, digest_hour, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [
       member.id,
       member.family_id,
       member.name,
-      member.telegram_user_id,
-      member.telegram_chat_id,
+      member.channel,
+      member.channel_user_id,
+      member.channel_chat_id,
       member.timezone,
       member.digest_hour,
       member.created_at,
@@ -69,13 +74,16 @@ export async function addMember(db: Db, input: AddMemberInput): Promise<FamilyMe
   return member;
 }
 
-export async function getMemberByTelegramUserId(
+/** Ids are only unique within a channel, so both halves are the key. */
+export async function getMemberByChannelId(
   db: Db,
-  telegramUserId: string,
+  channel: string,
+  channelUserId: string,
 ): Promise<FamilyMember | null> {
-  return db.first<FamilyMember>('SELECT * FROM family_members WHERE telegram_user_id = ?', [
-    telegramUserId,
-  ]);
+  return db.first<FamilyMember>(
+    'SELECT * FROM family_members WHERE channel = ? AND channel_user_id = ?',
+    [channel, channelUserId],
+  );
 }
 
 export async function getMember(db: Db, id: string): Promise<FamilyMember> {
@@ -93,7 +101,7 @@ export async function listMembers(db: Db, familyId: string): Promise<FamilyMembe
 
 /** Learn a member's DM chat id the first time they talk to the bot. */
 export async function rememberChatId(db: Db, memberId: string, chatId: string): Promise<void> {
-  await db.run('UPDATE family_members SET telegram_chat_id = ? WHERE id = ?', [chatId, memberId]);
+  await db.run('UPDATE family_members SET channel_chat_id = ? WHERE id = ?', [chatId, memberId]);
 }
 
 export async function updateMemberPrefs(
@@ -122,7 +130,7 @@ export function matchMemberByName(members: FamilyMember[], name: string): Family
   return (
     members.find((m) => m.name.toLowerCase() === needle) ??
     members.find((m) => m.name.toLowerCase().split(/\s+/)[0] === needle) ??
-    members.find((m) => m.telegram_user_id === needle) ??
+    members.find((m) => m.channel_user_id === needle) ??
     null
   );
 }

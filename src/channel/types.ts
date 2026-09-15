@@ -72,11 +72,17 @@ export interface RenderedMessage {
 }
 
 export interface OutboundMessage extends RenderedMessage {
+  /** Together with chatId this is the full address. Absent means the channel
+   *  the current update arrived on, which is right for every reply. */
+  channel?: string;
   chatId: string;
   replyToMessageId?: string;
 }
 
 export interface MessagingChannel {
+  /** Matches `family_members.channel`. How the engine knows which adapter
+   *  reaches which person when a family spans more than one app. */
+  name: string;
   /** Resolves to the channel-native id of the sent message, when the
    *  channel reports one. Needed to edit the message later. */
   send(message: OutboundMessage): Promise<string | null>;

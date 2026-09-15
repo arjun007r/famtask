@@ -44,13 +44,14 @@ unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
 schedule with the agent's intro line, the OVERDUE marker and due-date
 priority escalation all correct on its first real run.
 
-**Verified by tests:** 83 unit tests — state machine, ranking, due-date
+**Verified by tests:** 88 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec,
 the strict-schema invariants, the one-way mirror, line formatting, the
 button flow (confirm-before-done, the ⋯ menu, reassignment, in-place
-redraw, and taps on messages with no recorded view), and waiting-on
-(outsider capture, the family-member guard, clearing, and `/waiting`).
+redraw, and taps on messages with no recorded view), waiting-on
+(outsider capture, the family-member guard, clearing, and `/waiting`), and
+digest fan-out across two channels at once.
 
 **Measured:** parse quality, over 40 eval cases. The 7 waiting-on cases were
 added after the numbers below and have only been scored against hand-written
@@ -70,6 +71,12 @@ schema.
 place rather than only firing a toast, `✓` confirms before finishing, and
 every task carries a `⋯` menu with Blocked, Needs info and Reassign. The
 reassign picker has never been used against a second real member.
+
+**Members are per-channel as of 15 Sep 2026** (migration `0005`). Preethi
+does not want Telegram but does use WhatsApp, so `family_members.channel`
+now routes each person to their own app. The Telegram columns were renamed,
+not remodelled. **No WhatsApp adapter exists yet** — that is the next build,
+and it needs a spare phone number that has never been on regular WhatsApp.
 
 **`waiting_on` added 15 Sep 2026**, needing migration `0004`. Untested
 against real chat messages; the parser guidance for it has never met a live

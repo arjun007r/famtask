@@ -12,6 +12,7 @@ import { nowIso } from './core/ids.ts';
 import { createTelegramApi } from './telegram/api.ts';
 import { todoistTarget } from './sync/todoist.ts';
 import { telegramChannel } from './telegram/channel.ts';
+import type { MessagingChannel } from './channel/types.ts';
 import { parseUpdate, type TgUpdate } from './telegram/webhook.ts';
 
 export interface Env {
@@ -25,11 +26,28 @@ export interface Env {
   TODOIST_TOKEN?: string;
 }
 
-function buildDeps(env: Env): AppDeps {
-  const api = createTelegramApi(env.TELEGRAM_BOT_TOKEN);
+/**
+ * Every channel this deployment can reach somebody on. A member is routed by
+ * `family_members.channel`, so adding an app here is all it takes to let one
+ * person use it -- nothing above the channel boundary changes.
+ */
+function buildChannels(env: Env): Record<string, MessagingChannel> {
+  const channels: Record<string, MessagingChannel> = {};
+  const telegram = telegramChannel(createTelegramApi(env.TELEGRAM_BOT_TOKEN));
+  channels[telegram.name] = telegram;
+  return channels;
+}
+
+/** `inbound` names the channel this request arrived on; replies default to
+ *  it, while a digest fans out across all of them. */
+function buildDeps(env: Env, inbound = 'telegram'): AppDeps {
+  const channels = buildChannels(env);
+  const channel = channels[inbound];
+  if (!channel) throw new Error(`no adapter configured for channel "${inbound}"`);
   return {
     db: d1Adapter(env.DB),
-    channel: telegramChannel(api),
+    channel,
+    channels,
     anthropic: env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null,
     sync: env.TODOIST_TOKEN ? todoistTarget(env.TODOIST_TOKEN) : null,
     model: env.CLAUDE_MODEL,

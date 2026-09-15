@@ -6,6 +6,8 @@ import { splitForTelegram, TelegramApiError, type TelegramApi } from './api.ts';
  *  are sent as plain text -- no parse_mode -- so nothing needs escaping. */
 export function telegramChannel(api: TelegramApi): MessagingChannel {
   return {
+    name: 'telegram',
+
     async send(message: OutboundMessage) {
       const chunks = splitForTelegram(message.text);
       let lastId: string | null = null;
