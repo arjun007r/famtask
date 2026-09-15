@@ -23,8 +23,10 @@ import {
   createTask,
   editTask,
   getTaskView,
+  normalizeWaitingOn,
   queryTasks,
   setState,
+  setWaitingOn,
 } from './tasks.ts';
 
 /** Below this the message is treated as chit-chat. Group chat is noisier, so
@@ -117,7 +119,8 @@ async function createFromParsed(
   for (const spec of specs) {
     if (!spec.title?.trim()) continue;
     const list = await resolveList(db, ctx.familyId, spec.list);
-    const { kind, memberId } = resolveAssignee(members, spec.assignee, ctx);
+    const { kind, memberId, waitingOn } = resolveAssignee(members, spec.assignee, ctx);
+    const outsider = resolveWaitingOn(members, spec.waiting_on) ?? waitingOn;
     const priority: Priority = isPriority(spec.priority)
       ? spec.priority
       : inferPriorityFromText(ctx.rawText) ?? 'medium';
@@ -130,6 +133,7 @@ async function createFromParsed(
       createdBy: ctx.speaker.id,
       assigneeKind: kind,
       assignedTo: memberId,
+      waitingOn: outsider,
       priority,
       dueAt: normalizeDueDate(spec.due_date),
       sourceChatId: ctx.chatId,
@@ -174,6 +178,7 @@ async function applyStatusUpdate(
     throw err;
   }
   await applyDueDate(db, ctx, task.id, parsed);
+  await applyWaitingOn(db, ctx, task.id, parsed);
   const fresh = await getTaskView(db, task.id);
   const line = `${stateLabel(to)}: ${fresh.title} [${fresh.list_name}]`;
   const note = parsed.comment ? `\n${parsed.comment}` : '';
@@ -194,10 +199,17 @@ async function applyReassignment(
   const task = await findTarget(db, ctx, parsed);
   if (!task) return { reply: await notFound(db, ctx, parsed), notify: [] };
   const members = await listMembers(db, ctx.familyId);
-  const { kind, memberId } = resolveAssignee(members, parsed.new_assignee, ctx, 'unassigned');
+  const { kind, memberId, waitingOn } = resolveAssignee(members, parsed.new_assignee, ctx, 'unassigned');
   await assign(db, task.id, { kind, memberId }, ctx.speaker.id, parsed.comment ?? null);
-  const who =
-    kind === 'member' ? members.find((m) => m.id === memberId)?.name ?? 'someone' : 'the family';
+  // "Pass it to the landscaper" is not a reassignment inside the family: it
+  // stays with the speaker, who now owns chasing the landscaper.
+  if (waitingOn) await setWaitingOn(db, task.id, waitingOn, ctx.speaker.id);
+  await applyWaitingOn(db, ctx, task.id, parsed);
+  const who = waitingOn
+    ? `${waitingOn} (you are chasing it)`
+    : kind === 'member'
+      ? members.find((m) => m.id === memberId)?.name ?? 'someone'
+      : 'the family';
   const fresh = await getTaskView(db, task.id);
   return {
     reply: { text: `Reassigned to ${who}: ${task.title} [${task.list_name}]` },
@@ -221,6 +233,7 @@ async function applyComment(
     await setState(db, task.id, parsed.new_state, ctx.speaker.id);
   }
   const moved = await applyDueDate(db, ctx, task.id, parsed);
+  await applyWaitingOn(db, ctx, task.id, parsed);
   const fresh = await getTaskView(db, task.id);
   return {
     reply: {
@@ -233,6 +246,24 @@ async function applyComment(
       message: { text: `${ctx.speaker.name} on "${fresh.title}":\n${body}` },
     })),
   };
+}
+
+/** "none" is how the agent says the outsider finally came back. */
+async function applyWaitingOn(
+  db: Db,
+  ctx: InboxContext,
+  taskId: string,
+  parsed: ParsedMessage,
+): Promise<void> {
+  const raw = parsed.new_waiting_on?.trim();
+  if (!raw) return;
+  if (raw.toLowerCase() === 'none') {
+    await setWaitingOn(db, taskId, null, ctx.speaker.id);
+    return;
+  }
+  const members = await listMembers(db, ctx.familyId);
+  const outsider = resolveWaitingOn(members, raw);
+  if (outsider) await setWaitingOn(db, taskId, outsider, ctx.speaker.id);
 }
 
 /** Moving the deadline is what clears an overdue task: priority is derived
@@ -331,25 +362,86 @@ function resolveAssignee(
   raw: string | null | undefined,
   ctx: InboxContext,
   fallback: AssigneeKind = 'unassigned',
-): { kind: AssigneeKind; memberId: string | null } {
+): { kind: AssigneeKind; memberId: string | null; waitingOn: string | null } {
   const name = raw?.trim().toLowerCase();
   if (!name) {
     // Nobody named means the person who raised it owns it. "Unassigned" reads
     // as a bug to the person who just wrote the task down, and someone has to
     // hold it until it is explicitly handed over or thrown open to everyone.
     return fallback === 'unassigned'
-      ? { kind: 'member', memberId: ctx.speaker.id }
-      : { kind: fallback, memberId: null };
+      ? { kind: 'member', memberId: ctx.speaker.id, waitingOn: null }
+      : { kind: fallback, memberId: null, waitingOn: null };
   }
-  if (name === 'group' || name === 'family' || name === 'everyone' || name === 'anyone') {
-    return { kind: 'group', memberId: null };
-  }
+  if (GROUP_WORDS.has(name)) return { kind: 'group', memberId: null, waitingOn: null };
   if (name === 'unassigned' || name === 'nobody' || name === 'none') {
-    return { kind: 'unassigned', memberId: null };
+    return { kind: 'unassigned', memberId: null, waitingOn: null };
   }
-  if (name === 'me' || name === 'myself') return { kind: 'member', memberId: ctx.speaker.id };
-  const match = matchMemberByName(members, name);
-  return match ? { kind: 'member', memberId: match.id } : { kind: 'group', memberId: null };
+  if (name === 'me' || name === 'myself') {
+    return { kind: 'member', memberId: ctx.speaker.id, waitingOn: null };
+  }
+  const match = fuzzyMember(members, name);
+  if (match) return { kind: 'member', memberId: match.id, waitingOn: null };
+
+  // A name that is not a family member and not a stand-in for everyone is
+  // someone outside the family. Handing it to the group -- which is what this
+  // used to do -- threw away the only useful thing the message said, and put
+  // a task nobody in the family can finish in front of everybody.
+  return {
+    kind: 'member',
+    memberId: ctx.speaker.id,
+    waitingOn: normalizeWaitingOn(raw),
+  };
+}
+
+const GROUP_WORDS = new Set([
+  'group',
+  'family',
+  'everyone',
+  'anyone',
+  'someone',
+  'somebody',
+  'whoever',
+  'us',
+]);
+
+/**
+ * The guard on the new field. An agent that hears "Preethi is chasing the
+ * school" can just as easily put Preethi in waiting_on, which would hide a
+ * real assignment behind free text. A family member's name never survives
+ * here -- the caller already resolved assignment, and this returns null so
+ * that resolution stands.
+ */
+function resolveWaitingOn(
+  members: FamilyMember[],
+  raw: string | null | undefined,
+): string | null {
+  const name = normalizeWaitingOn(raw);
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  if (GROUP_WORDS.has(lower) || lower === 'me' || lower === 'myself') return null;
+  return fuzzyMember(members, lower) ? null : name;
+}
+
+/**
+ * Exact matching, then a shortening of a first name: "Pree" for Preethi.
+ * Only reached when deciding whether a name belongs to the family at all,
+ * where the cost of missing is now higher -- an unrecognised name becomes an
+ * outsider, and a member filed as an outsider is a visible mistake.
+ *
+ * Single words only, so a multi-word outsider ("the school office") can never
+ * collide, and three characters minimum, so initials do not.
+ */
+function fuzzyMember(members: FamilyMember[], name: string): FamilyMember | null {
+  const exact = matchMemberByName(members, name);
+  if (exact) return exact;
+  const needle = name.trim().toLowerCase();
+  if (needle.length < 3 || /\s/.test(needle)) return null;
+  return (
+    members.find((m) => {
+      const first = m.name.toLowerCase().split(/\s+/)[0] ?? '';
+      return first.length >= 3 && (first.startsWith(needle) || needle.startsWith(first));
+    }) ?? null
+  );
 }
 
 /** Accept YYYY-MM-DD from the agent; store as an ISO timestamp. */

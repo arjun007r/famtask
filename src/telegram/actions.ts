@@ -13,6 +13,7 @@ const TAGS = {
   task_show: 'tv',
   task_menu: 'tm',
   task_reassign: 'tr',
+  task_waiting_clear: 'wc',
   task_assign: 'ta',
   digest_list_toggle: 'dl',
 } as const;
@@ -55,6 +56,8 @@ export function decodeAction(data: string): Action {
       return { kind: 'task_menu', taskId: id };
     case TAGS.task_reassign:
       return { kind: 'task_reassign', taskId: id };
+    case TAGS.task_waiting_clear:
+      return { kind: 'task_waiting_clear', taskId: id };
     case TAGS.task_assign:
       return extra ? { kind: 'task_assign', taskId: id, to: extra } : { kind: 'noop' };
     case TAGS.digest_list_toggle:

@@ -23,12 +23,14 @@ export interface ParsedTask {
   description?: string | null;
   list?: string | null;
   assignee?: string | null;
+  /** Someone outside the family the task hangs on. */
+  waiting_on?: string | null;
   priority?: Priority | null;
   due_date?: string | null;
 }
 
 export interface ParsedQuery {
-  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next';
+  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'waiting';
   member?: string | null;
   list?: string | null;
   search?: string | null;
@@ -43,6 +45,8 @@ export interface ParsedMessage {
   target_task_hint?: string | null;
   new_state?: TaskState | null;
   new_assignee?: string | null;
+  /** A name to start waiting on, or "none" when the outsider came back. */
+  new_waiting_on?: string | null;
   comment?: string | null;
   query?: ParsedQuery | null;
   confidence: number;
@@ -75,7 +79,7 @@ const nullable = (schema: Record<string, unknown>, description: string) => ({
 const TASK_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'description', 'list', 'assignee', 'priority', 'due_date'],
+  required: ['title', 'description', 'list', 'assignee', 'waiting_on', 'priority', 'due_date'],
   properties: {
     title: { type: 'string', description: 'Short imperative title.' },
     description: nullable({ type: 'string' }, 'Extra detail, or null.'),
@@ -86,6 +90,12 @@ const TASK_SCHEMA = {
     assignee: nullable(
       { type: 'string' },
       'A family member name, or "group" if it is for whoever picks it up, or null if unclear.',
+    ),
+    waiting_on: nullable(
+      { type: 'string' },
+      'Somebody OUTSIDE the family the task depends on — a contractor, a shop, ' +
+        'a doctor\'s office, a relative, a company. Never a family member. Null ' +
+        'when the family can just do the thing themselves.',
     ),
     priority: nullable({ type: 'string', enum: ['high', 'medium', 'low'] }, 'Or null.'),
     due_date: nullable({ type: 'string' }, 'YYYY-MM-DD resolved from today, or null.'),
@@ -99,11 +109,12 @@ const QUERY_SCHEMA = {
   properties: {
     scope: {
       type: 'string',
-      enum: ['mine', 'member', 'list', 'unclaimed', 'next', 'all'],
+      enum: ['mine', 'member', 'list', 'unclaimed', 'next', 'all', 'waiting'],
       description:
         '"next" for the single most pressing thing ("what\'s next", "what should I do now"); ' +
         '"mine" for the asker\'s whole list; "all" for the family\'s open tasks; ' +
-        '"member" for someone else\'s; "list" for one named list; "unclaimed" for unowned work.',
+        '"member" for someone else\'s; "list" for one named list; "unclaimed" for unowned work; ' +
+        '"waiting" for everything the family is waiting on an outsider for.',
     },
     member: nullable({ type: 'string' }, 'Whose tasks, for scope=member.'),
     list: nullable({ type: 'string' }, 'Which list, for scope=list.'),
@@ -122,6 +133,7 @@ export const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
     'new_state',
     'new_due_date',
     'new_assignee',
+    'new_waiting_on',
     'comment',
     'query',
   ],
@@ -168,6 +180,12 @@ export const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
         'whoever picks it up ("someone else grab it"); "unassigned" only when it ' +
         'should explicitly belong to nobody. Only for intent=reassignment, else null.',
     ),
+    new_waiting_on: nullable(
+      { type: 'string' },
+      'The outsider an existing task now hangs on; the exact string "none" when ' +
+        'they have come back and the wait is over. Null when the message says ' +
+        'nothing about waiting on anyone.',
+    ),
     comment: nullable(
       { type: 'string' },
       'Text to append to the task thread, or null.',
@@ -202,7 +220,16 @@ Rules:
 - Resolve relative dates ("tomorrow", "Friday") against today's date.
 - Moving a deadline on an existing task is a status_update or comment with
   new_due_date set — not a new task.
-- Set priority high only for genuine urgency, not politeness ("please" is not urgent).`;
+- Set priority high only for genuine urgency, not politeness ("please" is not urgent).
+- waiting_on is for people OUTSIDE the family — a plumber, the school office,
+  an insurer, a relative who is not a member. A family member's name NEVER goes
+  in waiting_on; that is what assignee is for. "Ask the plumber to come Thursday"
+  is waiting_on "the plumber", assignee null (whoever raised it chases it).
+  "Preethi is chasing the insurance company" is assignee "Preethi",
+  waiting_on "the insurance company".
+- When an outsider finally comes back ("the plumber called", "the school
+  replied"), that is a status_update or comment with new_waiting_on set to
+  "none".`;
 
 export async function parseMessage(
   client: Anthropic,

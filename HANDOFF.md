@@ -44,14 +44,17 @@ unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
 schedule with the agent's intro line, the OVERDUE marker and due-date
 priority escalation all correct on its first real run.
 
-**Verified by tests:** 74 unit tests — state machine, ranking, due-date
+**Verified by tests:** 83 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec,
-the strict-schema invariants, the one-way mirror, line formatting, and the
+the strict-schema invariants, the one-way mirror, line formatting, the
 button flow (confirm-before-done, the ⋯ menu, reassignment, in-place
-redraw, and taps on messages with no recorded view).
+redraw, and taps on messages with no recorded view), and waiting-on
+(outsider capture, the family-member guard, clearing, and `/waiting`).
 
-**Measured:** parse quality, over 33 eval cases.
+**Measured:** parse quality, over 40 eval cases. The 7 waiting-on cases were
+added after the numbers below and have only been scored against hand-written
+fixtures — **re-run both models before trusting the table**.
 
 | | intent | exact match | chit-chat false positives |
 |---|---|---|---|
@@ -67,6 +70,10 @@ schema.
 place rather than only firing a toast, `✓` confirms before finishing, and
 every task carries a `⋯` menu with Blocked, Needs info and Reassign. The
 reassign picker has never been used against a second real member.
+
+**`waiting_on` added 15 Sep 2026**, needing migration `0004`. Untested
+against real chat messages; the parser guidance for it has never met a live
+model.
 
 **Never run with two people.** Every task so far is Arjun's. Nothing has
 exercised the notification path (assignee told immediately) or the bounce

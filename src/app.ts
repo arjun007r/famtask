@@ -77,6 +77,7 @@ import {
   getThread,
   queryTasks,
   setState,
+  setWaitingOn,
   tasksByIds,
 } from './core/services/tasks.ts';
 import type { FamilyMember } from './core/types.ts';
@@ -365,6 +366,11 @@ async function applyAction(
       return { next: overlay(current, { k: 'menu', id: act.taskId }) };
     case 'task_reassign':
       return { next: overlay(current, { k: 'assign', id: act.taskId }) };
+    case 'task_waiting_clear': {
+      const before = await getTaskView(db, act.taskId);
+      await setWaitingOn(db, act.taskId, null, member.id);
+      return { toast: `${before.waiting_on ?? 'They'} came back — no longer waiting`, next: back(current) };
+    }
     case 'task_assign': {
       const target =
         act.to === 'group'
@@ -590,6 +596,7 @@ const HELP = [
   '  /all              every open task, whoever owns it',
   '  /next             the single next thing',
   '  /open             unclaimed family tasks',
+  '  /waiting          what we are waiting on someone outside the family for',
   '  /lists            all lists',
   '  /list <name>      one list',
   '  /newlist <name>   create a list',
@@ -629,6 +636,8 @@ async function runCommand(
         return answerQuery(db, member, { scope: 'next' });
       case '/open':
         return answerQuery(db, member, { scope: 'unclaimed' });
+      case '/waiting':
+        return answerQuery(db, member, { scope: 'waiting' });
       case '/lists':
         return answerQuery(db, member, { scope: 'list' });
       case '/list':

@@ -69,6 +69,7 @@ export function todoistTarget(token: string): SyncTarget {
   function labelsFor(task: MirroredTask): string[] {
     const labels: string[] = [];
     if (task.assigneeName) labels.push(task.assigneeName.split(/\s+/)[0]!.toLowerCase());
+    if (task.waitingOn) labels.push('waiting');
     if (task.state === 'blocked') labels.push('blocked');
     if (task.state === 'needs_clarification') labels.push('needs-info');
     return labels;
@@ -77,7 +78,9 @@ export function todoistTarget(token: string): SyncTarget {
   async function body(task: MirroredTask): Promise<Record<string, unknown>> {
     return {
       content: task.title,
-      description: task.description ?? '',
+      description: [task.waitingOn ? `Waiting on ${task.waitingOn}` : '', task.description ?? '']
+        .filter(Boolean)
+        .join('\n\n'),
       project_id: await projectFor(task.listName),
       priority: PRIORITY[task.priority] ?? 1,
       labels: labelsFor(task),

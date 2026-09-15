@@ -25,13 +25,19 @@ import {
   queryTasks,
   rankTasks,
   setState,
+  setWaitingOn,
 } from '../src/core/services/tasks.ts';
 import { buildDigest, localHour, membersDueNow, recordDigestSends } from '../src/core/services/digest.ts';
 import { applyParsed, matchTask, type InboxContext } from '../src/core/services/inbox.ts';
 import { answerQuery } from '../src/core/services/queries.ts';
 import { reconcile, shapeHash } from '../src/core/services/sync.ts';
 import { sanitize } from '../src/agents/digest-writer.ts';
-import { taskLine, multipleLists, renderTaskList } from '../src/channel/format.ts';
+import {
+  taskLine,
+  multipleLists,
+  renderTaskList,
+  renderTaskMenu,
+} from '../src/channel/format.ts';
 import { TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
@@ -1171,5 +1177,172 @@ describe('button taps', () => {
       assert.ok(Buffer.byteLength(wire) <= 64, `${wire} exceeds Telegram's callback_data cap`);
       assert.deepEqual(decodeAction(wire), action);
     }
+  });
+});
+
+describe('waiting on someone outside the family', () => {
+  let env: Awaited<ReturnType<typeof setup>>;
+  beforeEach(async () => {
+    env = await setup();
+  });
+
+  it('records the outsider and leaves a family member chasing it', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Get the plumber to look at the leak');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Fix the kitchen leak', waiting_on: 'the plumber' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.waiting_on, 'the plumber');
+    // Someone in the family still owns it, or it reaches nobody's digest.
+    assert.equal(task!.assigned_to, env.arjun.id);
+  });
+
+  it('treats an unknown name in assignee as an outsider, not as the whole family', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Ask the landscaper to quote the back garden');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Quote for the back garden', assignee: 'the landscaper' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.waiting_on, 'the landscaper');
+    assert.equal(task!.assignee_kind, 'member', 'a task nobody in the family holds gets dropped');
+    assert.equal(task!.assigned_to, env.arjun.id);
+  });
+
+  it('never lets a family member end up in waiting_on', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Priya is chasing the school');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      // The agent mislabelling a member as the outsider must not hide the
+      // real assignment behind free text.
+      tasks: [{ title: 'Get the enrolment form', assignee: 'Priya', waiting_on: 'Priya' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.waiting_on, null);
+    assert.equal(task!.assigned_to, env.priya.id);
+  });
+
+  it('reads a shortened first name as the family member, not as an outsider', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Pri can you call the vet');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Call the vet', assignee: 'Pri' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.assigned_to, env.priya.id);
+    assert.equal(task!.waiting_on, null);
+  });
+
+  it('still throws a task open to the family when nobody in particular is named', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Someone needs to take the bins out');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Take the bins out', assignee: 'someone' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.assignee_kind, 'group');
+    assert.equal(task!.waiting_on, null);
+  });
+
+  it('clears the wait when the outsider comes back', async () => {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Fix the kitchen leak',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      waitingOn: 'the plumber',
+    });
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'the plumber finally called back');
+    await applyParsed(env.db, ctx, {
+      intent: 'comment',
+      confidence: 0.9,
+      target_task_hint: 'kitchen leak',
+      comment: 'plumber called back',
+      new_waiting_on: 'none',
+    });
+    assert.equal((await getTaskView(env.db, task.id)).waiting_on, null);
+  });
+
+  it('answers "what are we waiting on" with only those tasks', async () => {
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Chase the insurance claim',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      waitingOn: 'the insurer',
+    });
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Clean the garage',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    const answer = await answerQuery(env.db, env.arjun, { scope: 'waiting' });
+    assert.match(answer.text, /Chase the insurance claim/);
+    assert.doesNotMatch(answer.text, /Clean the garage/);
+  });
+
+  it('says who is being waited on, in words, and stops once the task closes', async () => {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Fix the kitchen leak',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      waitingOn: 'the plumber',
+    });
+    const open = await getTaskView(env.db, task.id);
+    assert.match(taskLine(open), /— Arjun · waiting on the plumber$/);
+
+    await setState(env.db, task.id, 'done', env.arjun.id);
+    assert.doesNotMatch(taskLine(await getTaskView(env.db, task.id)), /waiting on/);
+  });
+
+  it('offers to clear the wait from the menu, and only when there is one', async () => {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Fix the kitchen leak',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    const without = renderTaskMenu(await getTaskView(env.db, task.id));
+    assert.ok(!without.buttons!.flat().some((b) => b.action.kind === 'task_waiting_clear'));
+
+    await setWaitingOn(env.db, task.id, 'the plumber', env.arjun.id);
+    const withWait = renderTaskMenu(await getTaskView(env.db, task.id));
+    const clear = withWait.buttons!.flat().find((b) => b.action.kind === 'task_waiting_clear');
+    assert.ok(clear, 'a wait you cannot end from the digest is a wait you retype');
+    assert.match(clear!.label, /came back/);
+  });
+
+  it('pushes a changed wait to the mirror', () => {
+    const base = {
+      id: 'tsk_1',
+      title: 'Fix the kitchen leak',
+      description: null,
+      listName: 'Home',
+      assigneeName: 'Arjun',
+      waitingOn: null,
+      state: 'todo' as const,
+      priority: 'medium' as const,
+      dueAt: null,
+      closed: false,
+    };
+    assert.notEqual(shapeHash(base), shapeHash({ ...base, waitingOn: 'the plumber' }));
   });
 });

@@ -12,6 +12,8 @@ export interface MirroredTask {
   description: string | null;
   listName: string;
   assigneeName: string | null;
+  /** Somebody outside the family the task hangs on. */
+  waitingOn: string | null;
   state: TaskState;
   /** Already escalated by the due date, so the mirror shows what we show. */
   priority: Priority;

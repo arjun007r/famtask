@@ -7,7 +7,7 @@ import { listMembers, matchMemberByName } from './registry.ts';
 import { queryTasks, rankTasks } from './tasks.ts';
 
 export interface Query {
-  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'all';
+  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'all' | 'waiting';
   member?: string | null;
   list?: string | null;
   search?: string | null;
@@ -35,6 +35,19 @@ export async function answerQuery(
         search: query.search ?? undefined,
       });
       return renderTaskList('Everything open:', rankTasks(tasks).slice(0, query.limit ?? 25));
+    }
+    case 'waiting': {
+      // The GTD "waiting for" list: work the family cannot finish itself,
+      // which is exactly the work that gets silently dropped.
+      const visible = await listsVisibleTo(db, asker);
+      const tasks = await queryTasks(db, {
+        familyId,
+        listIds: visible.map((l) => l.id),
+        waitingOnly: true,
+        search: query.search ?? undefined,
+      });
+      if (tasks.length === 0) return { text: 'Not waiting on anyone outside the family.' };
+      return renderTaskList('Waiting on someone else:', rankTasks(tasks).slice(0, limit));
     }
     case 'next': {
       const tasks = await rankedFor(db, asker, asker.id, query.search);

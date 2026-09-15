@@ -34,6 +34,10 @@
   Reassign / Details. `✓` asks for confirmation first. Taps edit the message
   in place, so the screen reflects the change immediately, and Back restores
   what an overlay covered.
+- **Waiting on outsiders** (`tasks.waiting_on`, `/waiting`) — work the family
+  can only chase: contractors, offices, relatives. A family member still owns
+  the chasing, so it never falls out of a digest. Free text by design; a guard
+  keeps family members out of the field.
 - **Notifications** — assignment, reassignment, status changes and comments
   DM the other party immediately; the daily digest is the backstop, not the
   only channel.

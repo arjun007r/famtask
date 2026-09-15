@@ -54,7 +54,10 @@ export function taskLine(task: TaskView, opts: LineOptions = {}): string {
           ? ` — ${firstName(task.assignee_name)}`
           : ' — unassigned';
   const list = opts.showList ? ` [${task.list_name}]` : '';
-  return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due}${list}${owner}`.trim();
+  // Spelled out rather than marked with a glyph: who holds a task has been
+  // misread here before, and "waiting on the plumber" is a second holder.
+  const waiting = task.waiting_on && !isClosed(task.state) ? ` · waiting on ${task.waiting_on}` : '';
+  return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due}${list}${owner}${waiting}`.trim();
 }
 
 /** A list tag on every line when there is only one list is noise, and it
@@ -174,8 +177,16 @@ export function renderTaskMenu(task: TaskView, now: Date = new Date()): Rendered
       { label: '👤 Reassign', action: { kind: 'task_reassign', taskId: task.id } },
       { label: '💬 Details', action: { kind: 'task_show', taskId: task.id } },
     ],
-    [{ label: '↩ Back', action: { kind: 'view_back' } }],
   ];
+  if (task.waiting_on) {
+    rows.push([
+      {
+        label: `✅ ${truncate(task.waiting_on, 18)} came back`,
+        action: { kind: 'task_waiting_clear', taskId: task.id },
+      },
+    ]);
+  }
+  rows.push([{ label: '↩ Back', action: { kind: 'view_back' } }]);
   return { text: lines.join('\n'), buttons: rows, view: { k: 'menu', id: task.id } };
 }
 
@@ -233,6 +244,13 @@ export function renderTaskDetail(
   ];
   if (task.assignee_name) lines.push(`Assigned to ${task.assignee_name}`);
   else lines.push(task.assignee_kind === 'group' ? 'Open to the family' : 'Unassigned');
+  if (task.waiting_on) {
+    lines.push(
+      `Waiting on ${task.waiting_on} — outside the family, so ${
+        task.assignee_name ? firstName(task.assignee_name) : 'whoever owns this'
+      } chases it`,
+    );
+  }
   if (task.due_at) {
     const timing = timingOf(task, now);
     lines.push(

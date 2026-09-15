@@ -20,6 +20,7 @@ interface Row {
   description: string | null;
   list_name: string;
   assignee_name: string | null;
+  waiting_on: string | null;
   state: TaskState;
   priority: Priority;
   due_at: string | null;
@@ -45,7 +46,7 @@ export async function reconcile(
   opts: { limit?: number; now?: Date } = {},
 ): Promise<SyncReport> {
   const rows = await db.all<Row>(
-    `SELECT t.id, t.title, t.description, t.state, t.priority, t.due_at,
+    `SELECT t.id, t.title, t.description, t.state, t.priority, t.due_at, t.waiting_on,
             l.name AS list_name, m.name AS assignee_name,
             s.external_id, s.synced_hash
        FROM tasks t
@@ -114,6 +115,7 @@ function toMirrored(row: Row, now: Date): MirroredTask {
     description: row.description,
     listName: row.list_name,
     assigneeName: row.assignee_name,
+    waitingOn: row.waiting_on,
     state: row.state,
     priority: effectivePriority(
       { priority: row.priority, due_at: row.due_at, state: row.state },
@@ -133,6 +135,7 @@ export function shapeHash(task: MirroredTask): string {
     task.description ?? '',
     task.listName,
     task.assigneeName ?? '',
+    task.waitingOn ?? '',
     task.state,
     task.priority,
     task.dueAt ?? '',

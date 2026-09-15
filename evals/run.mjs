@@ -75,6 +75,13 @@ const cases = readFileSync(new URL('cases.jsonl', import.meta.url), 'utf8')
   .map((line) => JSON.parse(line))
   .filter((c) => !only || only.includes(c.id));
 
+/** "the plumber" and "plumber" are the same answer. "none" is not. */
+function nameMatches(got, want) {
+  if (!got) return false;
+  const w = String(want).toLowerCase();
+  return got.includes(w) || w.includes(got);
+}
+
 /**
  * An expectation may be a single value or a list. Some phrasings have more
  * than one correct reading — "next Monday" said on a Friday is either the
@@ -113,6 +120,24 @@ function grade(c, parsed) {
     const got = (tasks[0]?.assignee ?? '').toLowerCase();
     const want = e.assignee === 'speaker' ? ['', speaker.toLowerCase(), 'me'] : [e.assignee.toLowerCase()];
     if (!want.includes(got)) fails.push(`assignee=${got || '-'} want ${e.assignee}`);
+  }
+  if ('waiting_on' in e) {
+    // Names for outsiders are loose by nature ("the plumber" / "plumber"),
+    // so this is a containment check either way -- but null means null.
+    const got = (tasks[0]?.waiting_on ?? '').toLowerCase();
+    if (e.waiting_on === null) {
+      if (got) fails.push(`waiting_on=${got} want none`);
+    } else if (!nameMatches(got, e.waiting_on)) {
+      fails.push(`waiting_on=${got || '-'} want ${e.waiting_on}`);
+    }
+  }
+  if ('new_waiting_on' in e) {
+    const got = (parsed.new_waiting_on ?? '').toLowerCase();
+    if (e.new_waiting_on === null) {
+      if (got) fails.push(`new_waiting_on=${got} want none`);
+    } else if (!nameMatches(got, e.new_waiting_on)) {
+      fails.push(`new_waiting_on=${got || '-'} want ${e.new_waiting_on}`);
+    }
   }
   if (e.new_state && parsed.new_state !== e.new_state) {
     fails.push(`state=${parsed.new_state ?? '-'} want ${e.new_state}`);

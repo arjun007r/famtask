@@ -34,6 +34,8 @@ export type Action =
   | { kind: 'task_show'; taskId: string }
   | { kind: 'task_menu'; taskId: string }
   | { kind: 'task_reassign'; taskId: string }
+  /** The outsider came back; setting a wait needs free text, so it stays a message. */
+  | { kind: 'task_waiting_clear'; taskId: string }
   /** `to` is a member id, or 'group' for up-for-grabs. */
   | { kind: 'task_assign'; taskId: string; to: string }
   /** Dismiss an overlay and redraw whatever it covered. */

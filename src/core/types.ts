@@ -50,6 +50,9 @@ export interface Task {
   created_by: string | null;
   assignee_kind: AssigneeKind;
   assigned_to: string | null;
+  /** Someone outside the family the outcome depends on: a contractor, a
+   *  school office, a relative. `assigned_to` still names whoever chases it. */
+  waiting_on: string | null;
   state: TaskState;
   priority: Priority;
   due_at: string | null;

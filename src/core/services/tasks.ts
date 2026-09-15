@@ -19,6 +19,7 @@ export interface CreateTaskInput {
   createdBy?: string | null;
   assigneeKind?: AssigneeKind;
   assignedTo?: string | null;
+  waitingOn?: string | null;
   priority?: Priority;
   dueAt?: string | null;
   sourceChatId?: string | null;
@@ -44,6 +45,7 @@ export async function createTask(db: Db, input: CreateTaskInput): Promise<Task> 
     created_by: input.createdBy ?? null,
     assignee_kind: assigneeKind,
     assigned_to: assignedTo,
+    waiting_on: normalizeWaitingOn(input.waitingOn),
     state: 'todo',
     priority: input.priority ?? 'medium',
     due_at: input.dueAt ?? null,
@@ -58,8 +60,9 @@ export async function createTask(db: Db, input: CreateTaskInput): Promise<Task> 
     {
       sql: `INSERT INTO tasks
               (id, family_id, list_id, title, description, created_by, assignee_kind, assigned_to,
-               state, priority, due_at, created_at, updated_at, closed_at, source_chat_id, source_message_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, NULL, ?, ?)`,
+               waiting_on, state, priority, due_at, created_at, updated_at, closed_at,
+               source_chat_id, source_message_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, NULL, ?, ?)`,
       params: [
         task.id,
         task.family_id,
@@ -69,6 +72,7 @@ export async function createTask(db: Db, input: CreateTaskInput): Promise<Task> 
         task.created_by,
         task.assignee_kind,
         task.assigned_to,
+        task.waiting_on,
         task.priority,
         task.due_at,
         task.created_at,
@@ -165,6 +169,44 @@ export async function assign(
     }),
   ]);
   return { ...task, assignee_kind: target.kind, assigned_to: memberId, updated_at: ts };
+}
+
+/**
+ * Record (or clear) the outside party a task hangs on. Kept separate from
+ * assignment on purpose: a family member still owns the chasing, and a task
+ * with nobody chasing it never reaches a digest.
+ */
+export async function setWaitingOn(
+  db: Db,
+  taskId: string,
+  waitingOn: string | null,
+  actorMemberId: string | null,
+): Promise<Task> {
+  const task = await getTask(db, taskId);
+  const next = normalizeWaitingOn(waitingOn);
+  const ts = nowIso();
+  await db.batch([
+    {
+      sql: 'UPDATE tasks SET waiting_on = ?, updated_at = ? WHERE id = ?',
+      params: [next, ts, taskId],
+    },
+    eventStatement({
+      taskId,
+      actorMemberId,
+      // task_events.kind is CHECK-constrained; 'edited' is what it is for.
+      kind: 'edited',
+      body: next ? `Waiting on ${next}` : `No longer waiting on ${task.waiting_on ?? 'anyone'}`,
+      createdAt: ts,
+    }),
+  ]);
+  return { ...task, waiting_on: next, updated_at: ts };
+}
+
+/** Trimmed, length-capped, and empty-means-null. Free text from a chat
+ *  message goes straight in here. */
+export function normalizeWaitingOn(value: string | null | undefined): string | null {
+  const trimmed = value?.trim().replace(/\s+/g, ' ') ?? '';
+  return trimmed ? trimmed.slice(0, 80) : null;
 }
 
 /** Claim an unassigned/group task. Fails loudly if someone got there first,
@@ -273,6 +315,8 @@ export interface TaskFilter {
   includeUnclaimed?: boolean;
   /** Only group/unassigned tasks. */
   unclaimedOnly?: boolean;
+  /** Only tasks hanging on somebody outside the family. */
+  waitingOnly?: boolean;
   states?: readonly TaskState[];
   search?: string;
   limit?: number;
@@ -302,6 +346,9 @@ export async function queryTasks(db: Db, filter: TaskFilter): Promise<TaskView[]
     if (filter.listIds.length === 0) return [];
     where.push(`t.list_id IN (${filter.listIds.map(() => '?').join(', ')})`);
     params.push(...filter.listIds);
+  }
+  if (filter.waitingOnly) {
+    where.push("t.waiting_on IS NOT NULL AND t.waiting_on != ''");
   }
   if (filter.unclaimedOnly) {
     where.push("t.assignee_kind IN ('group', 'unassigned')");

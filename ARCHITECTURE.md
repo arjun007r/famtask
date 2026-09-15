@@ -136,11 +136,11 @@ prefixed uuids (`tsk_…`, `mem_…`), timestamps are ISO-8601 UTC strings.
 | `family_members` | Registry: name, `telegram_user_id`, DM chat id, timezone, digest hour. |
 | `lists` | Named lists. `owner_member_id NULL` = shared with the family. |
 | `member_digest_lists` | Each person's pick of ≤3 lists for their daily digest. |
-| `tasks` | The task itself, incl. `family_id`, `list_id`, state, priority, `source_chat_id`/`source_message_id`. |
+| `tasks` | The task itself, incl. `family_id`, `list_id`, state, priority, `waiting_on`, `source_chat_id`/`source_message_id`. |
 | `task_events` | Thread history and audit trail in one stream: `created`, `comment`, `state_change`, `reassigned`, `priority_change`, `edited`. |
 | `digest_sends` | One row per (member, task, day) appearance. Drives digest rotation. |
 | `processed_updates` | Telegram redelivers on non-200; this makes retries no-ops. |
-| `app_state` | Scheduler bookkeeping (e.g. "group board already posted today"). |
+| `app_state` | Scheduler bookkeeping, plus what each sent message is showing (see Views). |
 
 Two invariants enforced in SQL rather than trusted to callers:
 `assignee_kind = 'member'` iff `assigned_to IS NOT NULL`, and `state` /
@@ -149,6 +149,45 @@ Two invariants enforced in SQL rather than trusted to callers:
 `family_id` is on tasks, lists, and members. It is always one value today.
 It exists so a second family is a migration-free change; nothing else in the
 codebase concedes anything to multi-tenancy.
+
+## Waiting on someone outside the family
+
+A large share of household admin is not work the family does — it is work the
+family *chases*: the plumber, the school office, an insurer, a relative. Those
+tasks are the ones that get dropped, because there is no shared channel with
+the person who actually has to act.
+
+`tasks.waiting_on` is free text naming that outside party. It is deliberately
+**not** an assignee:
+
+- `assigned_to` still names a family member — whoever is chasing it. A task
+  with no family member on it reaches nobody's digest and rots, which is the
+  one failure this app exists to prevent. When a message names only an
+  outsider, the person who raised it becomes the chaser.
+- Chasing is optional in the sense the family means it: the task can sit with
+  the group or unassigned, in which case it surfaces under "Up for grabs"
+  rather than in one person's list. What it cannot do is belong to nobody at
+  all.
+- It is orthogonal to `state`. "Ring the plumber on Thursday" is `todo` and
+  waiting; "can't start until the plumber quotes" is `blocked` and waiting.
+  Collapsing the two would lose one of them.
+
+No contacts table, no reminders sent outward, no integration. A name is a
+string. The moment an outsider gets a record, a family task list is a CRM.
+
+`/waiting` lists it — GTD's "waiting for" list, which is where the idea comes
+from. The parser has a matching `waiting` query scope, so "what are we waiting
+on other people for?" works in plain words.
+
+**The guard.** An agent that hears "Preethi is chasing the school" can as
+easily put *Preethi* in `waiting_on`, which would hide a real assignment
+behind free text. `resolveWaitingOn()` drops any value that matches a family
+member or a stand-in for the group, so assignment resolution always wins.
+The eval suite covers both directions.
+
+Setting a wait needs free text, so it happens by message. Ending one is a
+button — `✅ <name> came back` appears on the `⋯` menu only when there is a
+wait to end.
 
 ## State machine
 
@@ -470,3 +509,6 @@ transferred.
   pruning if this ever grew.
 - **No per-member permissions.** Any member can act on any task in a list
   they can see. Intentional for a family.
+- **Waiting tasks rank like any other.** A task parked on a contractor is not
+  actionable today, so it arguably belongs below one that is. Ranking was left
+  alone rather than guessed at; revisit once `/waiting` has a few weeks of use.
