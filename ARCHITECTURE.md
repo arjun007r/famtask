@@ -200,10 +200,46 @@ Members on a channel with no group still get unclaimed work in the "Up for
 grabs" tail of their own digest, which is the part that actually matters.
 
 Channels differ in what they can do, and the interface says so rather than
-pretending otherwise: `update()` is optional, so a channel that cannot edit a
-sent message (WhatsApp's Cloud API, SMS) falls back to posting a fresh one,
-and a channel with no buttons at all simply ignores `buttons`. The engine
-degrades; it does not branch.
+pretending otherwise. Three optional members carry it, and the engine reads
+capabilities, never channel names:
+
+| | meaning | WhatsApp |
+|---|---|---|
+| `update?` | can edit a sent message | absent — no edit endpoint exists |
+| `toasts?` | has an ephemeral acknowledgement | `false` |
+| `fallback` on a message | what to send if the real one is refused | the template nudge |
+
+A channel that cannot edit falls back to posting a fresh message, with the
+recorded view attached to the new id so its buttons still work. A channel with
+no toasts gets the same words folded into the redraw instead — a tap is never
+silently swallowed. A channel with no buttons ignores `buttons` entirely.
+
+### WhatsApp
+
+`src/whatsapp/`. Three things differ from Telegram and are absorbed in the
+adapter:
+
+**Buttons.** Three reply buttons, or a ten-row list, against Telegram's
+effectively unlimited keyboard. `collapse()` flattens the keyboard
+**column-major**: every row's first button before any row's second. The
+renderer already puts the action people want first in each row, so a full
+digest keeps one tap available for every task rather than spending all ten
+slots on menus for the first five.
+
+**No editing.** `update` is deliberately not implemented rather than faked by
+sending a new message — faking it would leave the recorded view pinned to the
+old message id, and the buttons on the new one would have no view to unwind.
+
+**The 24-hour window.** Outside it, only a pre-approved template gets through,
+and template parameters reject newlines — so a task list can never be one.
+Rather than track the window and drift, the adapter sends the real message and
+treats error `131047` as the instruction it is: retry as the `fallback`
+template, a short nudge whose quick-reply button carries a `digest_show`
+action. Tapping it is an inbound message, which reopens the window, and the
+engine answers with the real digest.
+
+A member whose digest fails to send is logged and skipped; one unreachable
+person never costs the rest of the family their morning.
 
 ## Waiting on someone outside the family
 

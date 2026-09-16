@@ -48,7 +48,7 @@ import {
   renderTaskMenu,
 } from '../src/channel/format.ts';
 import { TOOL_SCHEMA } from '../src/agents/parser.ts';
-import { decodeAction, encodeAction } from '../src/telegram/actions.ts';
+import { decodeAction, encodeAction } from '../src/channel/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
 import {
   handleInboundAction,

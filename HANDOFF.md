@@ -44,7 +44,7 @@ unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
 schedule with the agent's intro line, the OVERDUE marker and due-date
 priority escalation all correct on its first real run.
 
-**Verified by tests:** 97 unit tests — state machine, ranking, due-date
+**Verified by tests:** 123 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec,
 the strict-schema invariants, the one-way mirror, line formatting, the
@@ -53,7 +53,7 @@ redraw, and taps on messages with no recorded view), waiting-on
 (outsider capture, the family-member guard, clearing, and `/waiting`), and
 digest fan-out across two channels at once.
 
-**Measured:** parse quality, over 40 eval cases. The 7 waiting-on cases were
+**Measured:** parse quality, over 46 eval cases. The 7 waiting-on cases were
 added after the numbers below and have only been scored against hand-written
 fixtures — **re-run both models before trusting the table**.
 
@@ -75,8 +75,10 @@ reassign picker has never been used against a second real member.
 **Members are per-channel as of 15 Sep 2026** (migration `0005`). Preethi
 does not want Telegram but does use WhatsApp, so `family_members.channel`
 now routes each person to their own app. The Telegram columns were renamed,
-not remodelled. **No WhatsApp adapter exists yet** — that is the next build,
-and it needs a spare phone number that has never been on regular WhatsApp.
+not remodelled. **The WhatsApp adapter is written and has never met Meta** (`src/whatsapp/`,
+26 tests against a fake Cloud API). No spare SIM is needed after all: Meta
+gives up to two free "555" numbers, auto-verified. `docs/RUNBOOK.md` has the
+full setup, including the template the digest needs.
 Telegram and WhatsApp are meant to run side by side, not as alternatives.
 The family group board stays Telegram-only: WhatsApp's Groups API needs an
 Official Business Account, so `group_chat_channel` (migration `0006`) pins

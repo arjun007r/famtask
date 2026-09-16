@@ -14,6 +14,14 @@ import { todoistTarget } from './sync/todoist.ts';
 import { telegramChannel } from './telegram/channel.ts';
 import type { MessagingChannel } from './channel/types.ts';
 import { parseUpdate, type TgUpdate } from './telegram/webhook.ts';
+import { createWhatsAppApi } from './whatsapp/api.ts';
+import { whatsAppChannel } from './whatsapp/channel.ts';
+import {
+  parseUpdate as parseWhatsAppUpdate,
+  verifySignature,
+  verifySubscription,
+  type WaPayload,
+} from './whatsapp/webhook.ts';
 
 export interface Env {
   DB: D1Database;
@@ -24,6 +32,13 @@ export interface Env {
   TELEGRAM_BOT_USERNAME?: string;
   /** Optional: mirror tasks into Todoist. Absent means the mirror is off. */
   TODOIST_TOKEN?: string;
+  /** Optional: WhatsApp. All four are required together or the channel is off. */
+  WHATSAPP_TOKEN?: string;
+  WHATSAPP_PHONE_NUMBER_ID?: string;
+  WHATSAPP_APP_SECRET?: string;
+  WHATSAPP_VERIFY_TOKEN?: string;
+  /** Approved template used to nudge someone whose 24-hour window has closed. */
+  WHATSAPP_DIGEST_TEMPLATE?: string;
 }
 
 /**
@@ -35,6 +50,12 @@ function buildChannels(env: Env): Record<string, MessagingChannel> {
   const channels: Record<string, MessagingChannel> = {};
   const telegram = telegramChannel(createTelegramApi(env.TELEGRAM_BOT_TOKEN));
   channels[telegram.name] = telegram;
+  if (env.WHATSAPP_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID) {
+    const wa = whatsAppChannel(
+      createWhatsAppApi(env.WHATSAPP_TOKEN, env.WHATSAPP_PHONE_NUMBER_ID),
+    );
+    channels[wa.name] = wa;
+  }
   return channels;
 }
 
@@ -51,7 +72,58 @@ function buildDeps(env: Env, inbound = 'telegram'): AppDeps {
     anthropic: env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null,
     sync: env.TODOIST_TOKEN ? todoistTarget(env.TODOIST_TOKEN) : null,
     model: env.CLAUDE_MODEL,
+    digestTemplate: env.WHATSAPP_DIGEST_TEMPLATE,
   };
+}
+
+/**
+ * Meta signs every delivery with the app secret; without checking it this is
+ * an open endpoint that will create tasks for anyone who finds the URL. The
+ * raw body has to be read once and reused, because re-reading it after
+ * hashing would give a different string.
+ */
+async function handleWhatsApp(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  if (!env.WHATSAPP_APP_SECRET || !env.WHATSAPP_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID) {
+    return new Response('whatsapp not configured', { status: 404 });
+  }
+  const raw = await request.text();
+  const ok = await verifySignature(
+    raw,
+    request.headers.get('x-hub-signature-256'),
+    env.WHATSAPP_APP_SECRET,
+  );
+  if (!ok) return new Response('forbidden', { status: 403 });
+
+  const parsed = parseWhatsAppUpdate(JSON.parse(raw) as WaPayload);
+  // Status callbacks and media we do not handle: accepted, so Meta stops
+  // redelivering, and ignored.
+  if (!parsed) return new Response('ok');
+
+  const deps = buildDeps(env, 'whatsapp');
+  const seen = await deps.db.first<{ update_id: string }>(
+    'SELECT update_id FROM processed_updates WHERE update_id = ?',
+    [parsed.updateId],
+  );
+  if (seen) return new Response('ok');
+  await deps.db.run(
+    'INSERT OR IGNORE INTO processed_updates (update_id, created_at) VALUES (?, ?)',
+    [parsed.updateId, nowIso()],
+  );
+
+  try {
+    if (parsed.message) await handleInboundMessage(deps, parsed.message);
+    else if (parsed.action) await handleInboundAction(deps, parsed.action);
+    ctx.waitUntil(mirrorTasks(deps).catch((err) => console.error('sync failed', err)));
+  } catch (err) {
+    await deps.db.run('DELETE FROM processed_updates WHERE update_id = ?', [parsed.updateId]);
+    console.error('whatsapp update failed', parsed.updateId, err);
+    return new Response('error', { status: 500 });
+  }
+  return new Response('ok');
 }
 
 export default {
@@ -60,6 +132,18 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return new Response('ok');
+    }
+
+    // Meta's one-time subscription handshake.
+    if (request.method === 'GET' && url.pathname === '/whatsapp/webhook') {
+      const challenge = verifySubscription(url, env.WHATSAPP_VERIFY_TOKEN ?? '');
+      return challenge
+        ? new Response(challenge)
+        : new Response('forbidden', { status: 403 });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/whatsapp/webhook') {
+      return handleWhatsApp(request, env, ctx);
     }
 
     if (request.method !== 'POST' || url.pathname !== '/telegram/webhook') {

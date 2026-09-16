@@ -22,7 +22,9 @@ import { parseMessage } from '../src/agents/parser.ts';
 // Pinned so relative dates in the cases ("tomorrow", "next monday") stay
 // deterministic. Cases express expected dates absolutely against this.
 const TODAY = '2026-09-11';
-const MEMBERS = ['Arjun', 'Priya'];
+// A real household, not two adults: Maya has no phone of her own but is a
+// family member the parser must be able to assign work to by name.
+const MEMBERS = ['Arjun', 'Priya', 'Maya'];
 const LISTS = ['Family', 'Business'];
 // Context the update, query and clarification cases refer to.
 //
@@ -39,6 +41,7 @@ const OPEN_TASKS = [
   'Sort out the recycling collection [Family] — group',
   'Clear out the loft [Family] — Arjun',
   'File the quarterly return [Business] — Arjun',
+  'Return the library books [Family] — Maya',
 ];
 
 const args = process.argv.slice(2);

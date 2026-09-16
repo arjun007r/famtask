@@ -277,3 +277,107 @@ The cron runs hourly and only messages people whose local hour matches their
 `digest_hour`. To see one now, set your hour to the next one to tick over
 (`/settime`), or run it locally against the CLI database with
 `npm run cli -- digest --now <ISO timestamp>`.
+
+## Adding WhatsApp
+
+Telegram keeps working throughout. This adds a second front door to the same
+Worker and the same database; nobody has to move.
+
+### 1. A phone number
+
+You do **not** need a spare SIM. Meta gives up to two free "555" business
+numbers, verified automatically. The catch: a 555 number cannot be migrated to
+another WhatsApp Business Account later, so treat it as permanent for this
+project.
+
+A number that has ever been used on regular WhatsApp will be rejected.
+
+### 2. Meta app
+
+Create an app at developers.facebook.com, add the **WhatsApp** product, and
+claim the free number. From the dashboard you need:
+
+| Value | Becomes |
+|---|---|
+| Phone number ID | `WHATSAPP_PHONE_NUMBER_ID` |
+| Permanent access token (System User) | `WHATSAPP_TOKEN` |
+| App secret (Settings → Basic) | `WHATSAPP_APP_SECRET` |
+| A string you invent | `WHATSAPP_VERIFY_TOKEN` |
+
+Use a **System User** token, not the temporary 24-hour one from the Getting
+Started panel, or the bot stops working tomorrow.
+
+```bash
+npx wrangler secret put WHATSAPP_TOKEN
+npx wrangler secret put WHATSAPP_PHONE_NUMBER_ID
+npx wrangler secret put WHATSAPP_APP_SECRET
+npx wrangler secret put WHATSAPP_VERIFY_TOKEN
+npm run deploy
+```
+
+### 3. The webhook
+
+In the app's WhatsApp → Configuration panel:
+
+- Callback URL: `https://famtask.famtask.workers.dev/whatsapp/webhook`
+- Verify token: whatever you set as `WHATSAPP_VERIFY_TOKEN`
+- Subscribe to the **`messages`** field. Nothing else is read.
+
+Meta calls the URL with a `GET` first and expects the challenge echoed back.
+If it fails, the verify token does not match — the Worker returns 403 rather
+than saying so, deliberately.
+
+### 4. The digest template
+
+Outside a 24-hour window from the person's last message, WhatsApp only
+delivers pre-approved templates, and **template parameters cannot contain
+newlines** — so the task list itself can never be one. famtask sends a nudge
+instead and delivers the real digest when it is tapped.
+
+Create a template under Message Templates:
+
+- Name: `famtask_daily_digest` (or set `WHATSAPP_DIGEST_TEMPLATE` to match)
+- Category: **Utility** (Marketing costs ~6× more and may be throttled)
+- Language: English
+- Body: `Morning {{1}} — you have {{2}} things on your list today.`
+- Add one **Quick reply** button, labelled something like `Show me`
+
+Approval usually takes under an hour. Until it is approved, digests sent
+outside the window will fail and be logged; nothing else breaks.
+
+### 5. Add the person
+
+From Telegram, once she has messaged the WhatsApp number at least once:
+
+```
+/adduser whatsapp:15550001111 Preethi
+```
+
+Then she sends `/settz America/Los_Angeles` and `/settime 9` on WhatsApp.
+
+### What she will not have
+
+The family group board. WhatsApp's Groups API requires an Official Business
+Account, which a household will not get. Unclaimed family tasks still reach
+her in the "Up for grabs" tail of her own digest, with Claim buttons.
+
+### Troubleshooting
+
+**Webhook verification fails.** `WHATSAPP_VERIFY_TOKEN` does not match what
+you typed in the Meta dashboard. The Worker returns a bare 403.
+
+**Messages arrive but nothing happens.** Check `npx wrangler tail`. A 403 on
+`/whatsapp/webhook` means the signature check failed — usually
+`WHATSAPP_APP_SECRET` is the App ID or a token rather than the secret.
+
+**"Re-engagement message" / error 131047.** Expected outside 24 hours. If the
+template fallback also fails, the template is not approved yet or the name
+does not match `WHATSAPP_DIGEST_TEMPLATE`.
+
+**Buttons missing on a long message.** WhatsApp caps an interactive body at
+1024 characters; the adapter sends the text first and the buttons in a
+follow-up rather than dropping them.
+
+**Only some buttons appear.** Three is the reply-button cap and ten the list
+cap. The adapter keeps one action per task before any second action, so
+everything stays reachable through a task's `⋯` menu.

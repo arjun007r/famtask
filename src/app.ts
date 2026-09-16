@@ -22,6 +22,7 @@ import {
   renderTaskMenu,
 } from './channel/format.ts';
 import type {
+  FallbackTemplate,
   InboundAction,
   InboundMessage,
   MessagingChannel,
@@ -101,6 +102,9 @@ export interface AppDeps {
   /** Absent means no agent layer: commands still work, free text does not. */
   anthropic: Anthropic | null;
   model?: string;
+  /** Name of the approved WhatsApp template used to nudge someone whose
+   *  24-hour window has closed. Ignored by every other channel. */
+  digestTemplate?: string;
   now?: () => Date;
 }
 
@@ -319,19 +323,29 @@ export async function handleInboundAction(deps: AppDeps, inbound: InboundAction)
 
   try {
     const outcome = await applyAction(deps, member, act, current, inbound.chatId);
-    await channel.acknowledge(inbound.ackToken, outcome.toast);
+    // A channel with no ephemeral toast gets the same words folded into the
+    // redraw instead, so a tap is never silently swallowed.
+    const spoken = channel.toasts === false;
+    await channel.acknowledge(inbound.ackToken, spoken ? undefined : outcome.toast);
     if (outcome.next) {
-      await redraw(deps, inbound.chatId, inbound.messageId, outcome.next, member);
+      await redraw(deps, inbound.chatId, inbound.messageId, outcome.next, member, spoken ? outcome.toast : undefined);
+    } else if (spoken && outcome.toast) {
+      await sendMessage(deps, { chatId: inbound.chatId, text: outcome.toast });
     }
     for (const message of outcome.send ?? []) {
       await sendMessage(deps, { chatId: inbound.chatId, ...message });
     }
   } catch (err) {
     if (err instanceof UserError) {
-      await channel.acknowledge(inbound.ackToken, err.message);
+      const spoken = channel.toasts === false;
+      await channel.acknowledge(inbound.ackToken, spoken ? undefined : err.message);
       // The rule that rejected the tap usually means the row moved under it,
       // so redraw anyway rather than leaving a stale screen.
-      if (current) await redraw(deps, inbound.chatId, inbound.messageId, rootOf(current), member);
+      if (current) {
+        await redraw(deps, inbound.chatId, inbound.messageId, rootOf(current), member, spoken ? err.message : undefined);
+      } else if (spoken) {
+        await sendMessage(deps, { chatId: inbound.chatId, text: err.message });
+      }
       return;
     }
     throw err;
@@ -414,6 +428,10 @@ async function applyAction(
       return { next: overlay(current, { k: 'detail', id: act.taskId }) };
     case 'view_back':
       return { next: current ? back(current) : undefined };
+    case 'digest_show': {
+      const built = await composeDigest(deps, member, now(deps));
+      return { send: [built?.message ?? { text: 'Nothing on your list right now. 🎉' }] };
+    }
     case 'digest_list_toggle': {
       const { atCap } = await toggleDigestList(db, member, act.listId);
       return {
@@ -460,8 +478,10 @@ async function redraw(
   messageId: string,
   view: View,
   member: FamilyMember,
+  note?: string,
 ): Promise<void> {
-  const message = await renderView(deps, view, member);
+  const rendered = await renderView(deps, view, member);
+  const message = note ? { ...rendered, text: `${note}\n\n${rendered.text}` } : rendered;
   if (deps.channel.update) {
     try {
       await deps.channel.update(chatId, messageId, message);
@@ -557,44 +577,16 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
 
   let sent = 0;
   for (const member of due) {
-    const today = localDate(member.timezone, at);
-    const digest = await buildDigest(db, member, { now: at });
-    if (digest.isEmpty) continue;
-
-    let items = digest.items;
-    let intro: string | null = null;
-    if (deps.anthropic && items.length > 0) {
-      // The deterministic ranking already stands on its own, so an agent
-      // outage costs the intro line and nothing else. The digest still goes.
-      const plan = await planDigest(deps.anthropic, member.name, items, {
-        today,
-        model: deps.model,
-      }).catch((err) => {
-        console.error('digest agent unavailable, sending ranked order', err);
-        return null;
-      });
-      if (plan) {
-        items = applyPlan(items, plan);
-        intro = plan.intro || null;
-      }
+    const built = await composeDigest(deps, member, at);
+    if (!built) continue;
+    try {
+      await sendMessage(deps, { ...addressOf(member)!, ...built.message });
+    } catch (err) {
+      // One unreachable person must not cost everybody else their morning.
+      console.error(`digest to ${member.name} failed`, err);
+      continue;
     }
-
-    const rendered = renderBoard(
-      {
-        preamble: intro || digestPreamble(digest),
-        tasks: items,
-        unclaimed: digest.unclaimed,
-        footer: digestFooter(digest),
-      },
-      at,
-    );
-    await sendMessage(deps, { ...addressOf(member)!, ...rendered });
-    await recordDigestSends(
-      db,
-      member.id,
-      [...items, ...digest.unclaimed].map((t) => t.id),
-      today,
-    );
+    await recordDigestSends(db, member.id, built.taskIds, localDate(member.timezone, at));
     sent += 1;
   }
 
@@ -625,6 +617,63 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
     }
   }
   return sent;
+}
+
+/**
+ * One person's digest, rendered. Shared by the scheduled run and by a tap on
+ * the nudge a channel sends when it may not say anything substantial
+ * unprompted.
+ */
+async function composeDigest(
+  deps: AppDeps,
+  member: FamilyMember,
+  at: Date,
+): Promise<{ message: RenderedMessage & { fallback?: FallbackTemplate }; taskIds: string[] } | null> {
+  const digest = await buildDigest(deps.db, member, { now: at });
+  if (digest.isEmpty) return null;
+
+  let items = digest.items;
+  let intro: string | null = null;
+  if (deps.anthropic && items.length > 0) {
+    // The deterministic ranking already stands on its own, so an agent
+    // outage costs the intro line and nothing else. The digest still goes.
+    const plan = await planDigest(deps.anthropic, member.name, items, {
+      today: localDate(member.timezone, at),
+      model: deps.model,
+    }).catch((err) => {
+      console.error('digest agent unavailable, sending ranked order', err);
+      return null;
+    });
+    if (plan) {
+      items = applyPlan(items, plan);
+      intro = plan.intro || null;
+    }
+  }
+
+  const rendered = renderBoard(
+    {
+      preamble: intro || digestPreamble(digest),
+      tasks: items,
+      unclaimed: digest.unclaimed,
+      footer: digestFooter(digest),
+    },
+    at,
+  );
+  const count = items.length + digest.unclaimed.length;
+  return {
+    message: {
+      ...rendered,
+      // Only used by a channel that refuses unprompted free text. The task
+      // list itself cannot go in a template -- parameters reject newlines --
+      // so this is a nudge whose button asks for the real thing.
+      fallback: {
+        name: deps.digestTemplate ?? 'famtask_daily_digest',
+        params: [firstName(member.name), String(count)],
+        action: { kind: 'digest_show' },
+      },
+    },
+    taskIds: [...items, ...digest.unclaimed].map((t) => t.id),
+  };
 }
 
 // --- commands ---------------------------------------------------------------

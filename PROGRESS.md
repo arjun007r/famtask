@@ -36,6 +36,10 @@
   what an overlay covered.
 - **Members with no device** — `channel = 'offline'` plus a guardian whose
   digest carries their work. A kid can own tasks without owning a phone.
+- **WhatsApp** (`src/whatsapp/`) — Cloud API adapter: signed webhook, reply
+  buttons and list messages within Meta's caps, and a template fallback so the
+  daily digest survives the 24-hour window. Tested against a fake API; never
+  run against Meta.
 - **Per-member channels** — `family_members.channel` routes each person to the
   app that reaches them, so a family split across Telegram and WhatsApp still
   shares one task list. One cron tick fans a digest out across all of them.

@@ -17,8 +17,8 @@ import { fileDb } from './core/db/sqlite.ts';
 import { addMember, ensureFamily, getMemberByChannelId, listMembers } from './core/services/registry.ts';
 import { createList, resolveList } from './core/services/lists.ts';
 import { queryTasks } from './core/services/tasks.ts';
-import { encodeAction } from './telegram/actions.ts';
-import { decodeAction } from './telegram/actions.ts';
+import { encodeAction } from './channel/actions.ts';
+import { decodeAction } from './channel/actions.ts';
 
 const DB_PATH = process.env.FAMTASK_DB ?? 'famtask.local.sqlite';
 

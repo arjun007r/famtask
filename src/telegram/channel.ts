@@ -1,5 +1,5 @@
 import type { MessagingChannel, OutboundMessage, RenderedMessage } from '../channel/types.ts';
-import { encodeAction } from './actions.ts';
+import { encodeAction } from '../channel/actions.ts';
 import { splitForTelegram, TelegramApiError, type TelegramApi } from './api.ts';
 
 /** Adapts the Bot API to the channel interface the engine speaks. Messages

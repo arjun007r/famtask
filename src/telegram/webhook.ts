@@ -1,5 +1,5 @@
 import type { ChatType, InboundAction, InboundMessage } from '../channel/types.ts';
-import { decodeAction } from './actions.ts';
+import { decodeAction } from '../channel/actions.ts';
 
 interface TgUser {
   id: number;
