@@ -132,7 +132,7 @@ prefixed uuids (`tsk_…`, `mem_…`), timestamps are ISO-8601 UTC strings.
 
 | Table | Purpose |
 |---|---|
-| `families` | The workspace. One row today. Holds `group_chat_id`. |
+| `families` | The workspace. One row today. Holds `group_chat_id` + `group_chat_channel`. |
 | `family_members` | Registry: name, `channel` + `channel_user_id`, DM chat id, timezone, digest hour. |
 | `lists` | Named lists. `owner_member_id NULL` = shared with the family. |
 | `member_digest_lists` | Each person's pick of ≤3 lists for their daily digest. |
@@ -170,6 +170,23 @@ behaviour; a cron that dies because one adapter is missing is not.
 Adding an app is `src/<app>/` implementing `MessagingChannel`, plus one line
 in `buildChannels()`. Nothing above the channel boundary changes — which is
 what that boundary was for.
+
+`/adduser <channel>:<id> <name>` is how somebody on one app adds somebody on
+another; a bare id keeps the adder's channel. Adding a member on a channel
+with no adapter is allowed and says so, because the member usually exists
+before the adapter does.
+
+**One member, one channel.** Nothing stops two rows sharing a name on
+different channels, but the engine would treat them as two people with
+separate task ownership. If that is ever wanted it should be a
+`member_identities` table, not a convention.
+
+**One group chat, on one channel.** `group_chat_channel` records which, so
+routing is explicit rather than inherited from whichever adapter the cron was
+built with. It is deliberately not one group per channel: WhatsApp's Groups
+API requires an Official Business Account, which a household will not have.
+Members on a channel with no group still get unclaimed work in the "Up for
+grabs" tail of their own digest, which is the part that actually matters.
 
 Channels differ in what they can do, and the interface says so rather than
 pretending otherwise: `update()` is optional, so a channel that cannot edit a

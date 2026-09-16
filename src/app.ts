@@ -534,7 +534,7 @@ export async function handleGroupMembership(
   event: { chatId: string; joined: boolean },
 ): Promise<void> {
   const family = await ensureFamily(deps.db);
-  await setGroupChat(deps.db, family.id, event.joined ? event.chatId : null);
+  await setGroupChat(deps.db, family.id, event.joined ? event.chatId : null, deps.channel.name);
   if (event.joined) {
     await sendMessage(deps, {
       chatId: event.chatId,
@@ -611,7 +611,13 @@ export async function runScheduledDigests(deps: AppDeps): Promise<number> {
     if (await claimOnce(db, `group_board:${family.id}`, stamp)) {
       const board = await buildGroupBoard(db, family.id, { now: at });
       if (board.length > 0) {
-        await sendMessage(deps, { chatId: family.group_chat_id, ...renderGroupBoard(board, at) });
+        await sendMessage(deps, {
+          // Explicitly the group's own channel, not whichever adapter the
+          // cron happened to be built with.
+          channel: family.group_chat_channel ?? undefined,
+          chatId: family.group_chat_id,
+          ...renderGroupBoard(board, at),
+        });
       }
     }
   }
@@ -627,6 +633,7 @@ const HELP = [
   '  /next             the single next thing',
   '  /open             unclaimed family tasks',
   '  /waiting          what we are waiting on someone outside the family for',
+  '  /adduser          add someone, on your app or another: <channel>:<id> <name>',
   '  /lists            all lists',
   '  /list <name>      one list',
   '  /newlist <name>   create a list',
@@ -728,24 +735,40 @@ async function runCommand(
       }
 
       case '/adduser': {
-        const [id, ...nameParts] = rest;
+        const [target, ...nameParts] = rest;
         const name = nameParts.join(' ').trim();
-        if (!id || !name) return { text: `Usage: /adduser <their ${member.channel} id> <name>` };
+        if (!target || !name) {
+          return {
+            text: [
+              `Usage: /adduser <id> <name>`,
+              `       /adduser <channel>:<id> <name>`,
+              '',
+              `Without a channel I assume ${member.channel}, the one you are on.`,
+              `Channels I can reach: ${configuredChannels(deps).join(', ')}`,
+            ].join('\n'),
+          };
+        }
+        // "whatsapp:15550001111" — the whole point of per-member channels is
+        // adding somebody who is not on yours.
+        const [channel, channelUserId] = splitChannelRef(target, member.channel);
         const added = await addMember(db, {
           familyId: member.family_id,
           name,
-          // Whoever is adding them is on some channel; assume the same one
-          // unless they say otherwise by messaging the bot themselves.
-          channel: member.channel,
-          channelUserId: id,
+          channel,
+          channelUserId,
           timezone: member.timezone,
         });
-        return { text: `Added ${added.name}. They should message me so I can DM them.` };
+        const reachable = configuredChannels(deps).includes(channel);
+        return {
+          text: reachable
+            ? `Added ${added.name} on ${channel}. They should message me there so I can DM them.`
+            : `Added ${added.name} on ${channel} — but I have no ${channel} adapter wired up yet, so I cannot message them until one is.`,
+        };
       }
 
       case '/here': {
         if (inbound.chatType !== 'group') return { text: 'Run /here inside the family group.' };
-        await setGroupChat(db, member.family_id, inbound.chatId);
+        await setGroupChat(db, member.family_id, inbound.chatId, deps.channel.name);
         return { text: "Got it — this is the family group." };
       }
 
@@ -781,6 +804,19 @@ async function digestListPicker(db: Db, member: FamilyMember): Promise<RenderedM
   const visible = await listsVisibleTo(db, member);
   const { lists } = await digestListsFor(db, member);
   return renderDigestListPicker(visible, new Set(lists.map((l) => l.id)), MAX_DIGEST_LISTS);
+}
+
+/** "whatsapp:15550001111" -> ['whatsapp', '15550001111']; a bare id keeps the
+ *  caller's own channel. Only a known-looking prefix counts, so a raw id that
+ *  happens to contain a colon is left alone. */
+function splitChannelRef(raw: string, fallback: string): [string, string] {
+  const match = /^([a-z][a-z0-9_]{1,19}):(.+)$/i.exec(raw.trim());
+  return match ? [match[1]!.toLowerCase(), match[2]!] : [fallback, raw.trim()];
+}
+
+function configuredChannels(deps: AppDeps): string[] {
+  const names = new Set([deps.channel.name, ...Object.keys(deps.channels ?? {})]);
+  return [...names].sort();
 }
 
 /** Turn expected failures into a reply instead of a 500. */

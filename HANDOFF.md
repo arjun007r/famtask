@@ -44,7 +44,7 @@ unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
 schedule with the agent's intro line, the OVERDUE marker and due-date
 priority escalation all correct on its first real run.
 
-**Verified by tests:** 88 unit tests — state machine, ranking, due-date
+**Verified by tests:** 91 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec,
 the strict-schema invariants, the one-way mirror, line formatting, the
@@ -77,6 +77,11 @@ does not want Telegram but does use WhatsApp, so `family_members.channel`
 now routes each person to their own app. The Telegram columns were renamed,
 not remodelled. **No WhatsApp adapter exists yet** — that is the next build,
 and it needs a spare phone number that has never been on regular WhatsApp.
+Telegram and WhatsApp are meant to run side by side, not as alternatives.
+The family group board stays Telegram-only: WhatsApp's Groups API needs an
+Official Business Account, so `group_chat_channel` (migration `0006`) pins
+the group to one channel and everyone else gets unclaimed work through their
+own digest instead.
 
 **`waiting_on` added 15 Sep 2026**, needing migration `0004`. Untested
 against real chat messages; the parser guidance for it has never met a live

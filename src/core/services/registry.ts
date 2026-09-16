@@ -8,7 +8,13 @@ import type { Family, FamilyMember } from '../types.ts';
 export async function ensureFamily(db: Db, name = 'Family'): Promise<Family> {
   const existing = await db.first<Family>('SELECT * FROM families LIMIT 1');
   if (existing) return existing;
-  const family: Family = { id: newId('fam'), name, group_chat_id: null, created_at: nowIso() };
+  const family: Family = {
+    id: newId('fam'),
+    name,
+    group_chat_id: null,
+    group_chat_channel: null,
+    created_at: nowIso(),
+  };
   await db.run('INSERT INTO families (id, name, group_chat_id, created_at) VALUES (?, ?, ?, ?)', [
     family.id,
     family.name,
@@ -24,8 +30,17 @@ export async function getFamily(db: Db, familyId: string): Promise<Family> {
   return row;
 }
 
-export async function setGroupChat(db: Db, familyId: string, chatId: string | null): Promise<void> {
-  await db.run('UPDATE families SET group_chat_id = ? WHERE id = ?', [chatId, familyId]);
+export async function setGroupChat(
+  db: Db,
+  familyId: string,
+  chatId: string | null,
+  channel: string | null = null,
+): Promise<void> {
+  await db.run('UPDATE families SET group_chat_id = ?, group_chat_channel = ? WHERE id = ?', [
+    chatId,
+    chatId ? channel : null,
+    familyId,
+  ]);
 }
 
 export interface AddMemberInput {

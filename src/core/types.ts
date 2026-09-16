@@ -17,6 +17,8 @@ export interface Family {
   id: string;
   name: string;
   group_chat_id: string | null;
+  /** Which channel that group lives on. Null when there is no group. */
+  group_chat_channel: string | null;
   created_at: string;
 }
 

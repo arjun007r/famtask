@@ -12,7 +12,9 @@ import {
 import {
   addMember,
   ensureFamily,
+  getMemberByChannelId,
   matchMemberByName,
+  setGroupChat,
   updateMemberPrefs,
 } from '../src/core/services/registry.ts';
 import {
@@ -1458,6 +1460,103 @@ describe('a family split across two messaging apps', () => {
 
     await assert.doesNotReject(() => runScheduledDigests(deps));
     assert.equal(tg.sent.length, 1, 'the wired-up half still gets its digest');
+  });
+
+  it('lets someone on one app add someone on another', async () => {
+    const { db } = memoryDb();
+    const family = await ensureFamily(db, 'Home');
+    await addMember(db, {
+      familyId: family.id,
+      name: 'Arjun',
+      channel: 'telegram',
+      channelUserId: '1001',
+      channelChatId: '1001',
+    });
+    const tg = adapter('telegram');
+    const wa = adapter('whatsapp');
+    const deps: AppDeps = {
+      db,
+      channel: tg.channel,
+      channels: { telegram: tg.channel, whatsapp: wa.channel },
+      anthropic: null,
+    };
+
+    await handleInboundMessage(deps, {
+      chatId: '1001',
+      chatType: 'dm',
+      userId: '1001',
+      userDisplayName: 'Arjun',
+      text: '/adduser whatsapp:15550001111 Preethi',
+      messageId: 'm1',
+      addressedToBot: true,
+    });
+    assert.match(tg.sent[0]!.text, /Added Preethi on whatsapp/);
+
+    const added = await getMemberByChannelId(db, 'whatsapp', '15550001111');
+    assert.equal(added?.name, 'Preethi');
+    assert.equal(added?.channel, 'whatsapp');
+    // And the same id on Telegram is still a different person.
+    assert.equal(await getMemberByChannelId(db, 'telegram', '15550001111'), null);
+  });
+
+  it('warns when adding someone on a channel it cannot actually reach', async () => {
+    const { db } = memoryDb();
+    const family = await ensureFamily(db, 'Home');
+    await addMember(db, {
+      familyId: family.id,
+      name: 'Arjun',
+      channel: 'telegram',
+      channelUserId: '1001',
+      channelChatId: '1001',
+    });
+    const tg = adapter('telegram');
+    const deps: AppDeps = { db, channel: tg.channel, channels: { telegram: tg.channel }, anthropic: null };
+
+    await handleInboundMessage(deps, {
+      chatId: '1001',
+      chatType: 'dm',
+      userId: '1001',
+      userDisplayName: 'Arjun',
+      text: '/adduser whatsapp:15550001111 Preethi',
+      messageId: 'm1',
+      addressedToBot: true,
+    });
+    assert.match(tg.sent[0]!.text, /no whatsapp adapter wired up/);
+  });
+
+  it('posts the group board to the group\'s own channel, not the cron default', async () => {
+    const home = await household();
+    const tg = adapter('telegram');
+    const wa = adapter('whatsapp');
+    // The group is a Telegram group, recorded as such.
+    await setGroupChat(home.db, home.family.id, '-500', 'telegram');
+    await createTask(home.db, {
+      familyId: home.family.id,
+      listId: (await resolveList(home.db, home.family.id, null)).id,
+      title: 'Book the chimney sweep',
+      createdBy: home.arjun.id,
+      assigneeKind: 'group',
+    });
+    // Built with WhatsApp as the inbound default, as a cron easily could be.
+    const deps: AppDeps = {
+      db: home.db,
+      channel: wa.channel,
+      channels: { telegram: tg.channel, whatsapp: wa.channel },
+      anthropic: null,
+      now: at9am,
+    };
+    await runScheduledDigests(deps);
+
+    const board = tg.sent.find((m) => m.chatId === '-500');
+    assert.ok(board, 'the board belongs on Telegram, where the group is');
+    assert.match(board!.text, /Book the chimney sweep/);
+    assert.ok(!wa.sent.some((m) => m.chatId === '-500'), 'and nowhere else');
+
+    // The consolation for a member with no group on their channel: unclaimed
+    // family work still reaches them, in the tail of their own digest.
+    const hers = wa.sent.find((m) => m.chatId === '15550001111');
+    assert.match(hers!.text, /Up for grabs/);
+    assert.match(hers!.text, /Book the chimney sweep/);
   });
 
   it('routes a reply back to the app the message came in on', async () => {
