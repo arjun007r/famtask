@@ -2,6 +2,7 @@ import type { Db } from '../db/adapter.ts';
 import { newId, nowIso } from '../ids.ts';
 import type { FamilyMember, TaskList, TaskView } from '../types.ts';
 import { digestListsFor } from './lists.ts';
+import { listDependents } from './registry.ts';
 import { queryTasks, rankTasks } from './tasks.ts';
 
 export const DIGEST_SIZE = 5;
@@ -14,6 +15,8 @@ export interface Digest {
   /** They have more lists than the digest holds and have not picked yet. */
   needsListChoice: boolean;
   items: TaskView[];
+  /** Members with no device whose work this digest is carrying. */
+  dependents: FamilyMember[];
   /** Group/unassigned tasks, shown after their own so nothing gets lost. */
   unclaimed: TaskView[];
   isEmpty: boolean;
@@ -36,7 +39,20 @@ export async function buildDigest(
     listIds,
     assignedTo: member.id,
   });
-  const items = rankTasks(mine, { now, shownCounts }).slice(0, limit);
+  // A member with no device gets no digest, so their work would reach nobody
+  // at all. It rides along with their guardian's, ranked together: a kid's
+  // homework due today outranks a parent's chore due next week, and the line
+  // already names the owner so there is no confusion about whose it is.
+  const dependents = await listDependents(db, member.id);
+  const theirs =
+    dependents.length > 0
+      ? await queryTasks(db, {
+          familyId: member.family_id,
+          listIds,
+          assignedToAny: dependents.map((d) => d.id),
+        })
+      : [];
+  const items = rankTasks([...mine, ...theirs], { now, shownCounts }).slice(0, limit);
 
   const openToAll = await queryTasks(db, {
     familyId: member.family_id,
@@ -50,6 +66,7 @@ export async function buildDigest(
     lists,
     needsListChoice: needsChoice,
     items,
+    dependents,
     unclaimed,
     isEmpty: items.length === 0 && unclaimed.length === 0,
   };

@@ -311,6 +311,8 @@ export interface TaskFilter {
   familyId: string;
   listIds?: string[];
   assignedTo?: string;
+  /** Any of several owners, for a guardian seeing their dependents' work. */
+  assignedToAny?: string[];
   /** Include group/unassigned tasks alongside assignedTo. */
   includeUnclaimed?: boolean;
   /** Only group/unassigned tasks. */
@@ -349,6 +351,11 @@ export async function queryTasks(db: Db, filter: TaskFilter): Promise<TaskView[]
   }
   if (filter.waitingOnly) {
     where.push("t.waiting_on IS NOT NULL AND t.waiting_on != ''");
+  }
+  if (filter.assignedToAny) {
+    if (filter.assignedToAny.length === 0) return [];
+    where.push(`t.assigned_to IN (${filter.assignedToAny.map(() => '?').join(', ')})`);
+    params.push(...filter.assignedToAny);
   }
   if (filter.unclaimedOnly) {
     where.push("t.assignee_kind IN ('group', 'unassigned')");

@@ -176,6 +176,17 @@ another; a bare id keeps the adder's channel. Adding a member on a channel
 with no adapter is allowed and says so, because the member usually exists
 before the adapter does.
 
+**Members with no device.** `channel = 'offline'` is a member who owns tasks
+and is named on them like anyone else but cannot be messaged: a young kid, a
+grandparent. `channel_chat_id` stays NULL, which the digest and notification
+paths already read as "unreachable, skip".
+
+Skipping them silently was the bug — their tasks then appeared in *nobody's*
+digest. `guardian_member_id` is the family member who carries that work:
+their dependents' open tasks are ranked in alongside their own, so a kid's
+homework due today outranks a parent's chore due next month. The task line
+already names the owner, so nothing is ambiguous about whose it is.
+
 **One member, one channel.** Nothing stops two rows sharing a name on
 different channels, but the engine would treat them as two people with
 separate task ownership. If that is ever wanted it should be a

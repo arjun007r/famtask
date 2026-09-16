@@ -13,6 +13,8 @@ import {
   addMember,
   ensureFamily,
   getMemberByChannelId,
+  isOffline,
+  listMembers,
   matchMemberByName,
   setGroupChat,
   updateMemberPrefs,
@@ -1575,5 +1577,108 @@ describe('a family split across two messaging apps', () => {
     });
     assert.equal(wa.sent.length, 1);
     assert.match(wa.sent[0]!.text, /Call the school/);
+  });
+});
+
+describe('a family member with no phone', () => {
+  let env: Awaited<ReturnType<typeof setup>>;
+  beforeEach(async () => {
+    env = await setup();
+  });
+
+  async function maya() {
+    return addMember(env.db, {
+      familyId: env.familyId,
+      name: 'Maya',
+      channel: 'offline',
+      guardianMemberId: env.arjun.id,
+    });
+  }
+
+  it('needs no invented id, and can never be messaged', async () => {
+    const kid = await maya();
+    assert.ok(isOffline(kid));
+    assert.equal(kid.channel_chat_id, null);
+    assert.ok(kid.channel_user_id, 'still has an internal id, ours not theirs');
+    assert.equal(
+      membersDueNow(await listMembers(env.db, env.familyId), new Date('2026-09-17T09:00:00Z'))
+        .some((m) => m.id === kid.id),
+      false,
+    );
+  });
+
+  it('still insists on an id for someone who can be messaged', async () => {
+    await assert.rejects(
+      () => addMember(env.db, { familyId: env.familyId, name: 'Ghost', channel: 'telegram' }),
+      /id to be able to message them/,
+    );
+  });
+
+  it('takes tasks by name like anyone else', async () => {
+    const kid = await maya();
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'Maya needs to finish her maths homework');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Finish maths homework', assignee: 'Maya' }],
+    });
+    const [task] = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(task!.assigned_to, kid.id);
+    assert.match(taskLine(task!), /— Maya$/);
+  });
+
+  it('carries their work in the guardian digest, since they get none of their own', async () => {
+    const kid = await maya();
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Finish maths homework',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: kid.id,
+    });
+    const digest = await buildDigest(env.db, env.arjun, { now: new Date('2026-09-17T09:00:00Z') });
+    assert.deepEqual(digest.dependents.map((d) => d.name), ['Maya']);
+    assert.ok(digest.items.some((t) => t.title === 'Finish maths homework'));
+  });
+
+  it('does not put their work in an unrelated member digest', async () => {
+    const kid = await maya();
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Finish maths homework',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: kid.id,
+    });
+    const hers = await buildDigest(env.db, env.priya, { now: new Date('2026-09-17T09:00:00Z') });
+    assert.equal(hers.dependents.length, 0);
+    assert.ok(!hers.items.some((t) => t.title === 'Finish maths homework'));
+  });
+
+  it('ranks a kid urgent task above a guardian less urgent one', async () => {
+    const kid = await maya();
+    const now = new Date('2026-09-17T09:00:00Z');
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Clean the garage',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      dueAt: '2026-10-30T00:00:00Z',
+    });
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Finish maths homework',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: kid.id,
+      dueAt: '2026-09-17T00:00:00Z',
+    });
+    const digest = await buildDigest(env.db, env.arjun, { now });
+    assert.equal(digest.items[0]?.title, 'Finish maths homework');
   });
 });

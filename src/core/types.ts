@@ -32,6 +32,8 @@ export interface FamilyMember {
   /** DM conversation id, learned the first time they message the bot. Until
    *  it is set the member cannot receive a digest. */
   channel_chat_id: string | null;
+  /** For a member who cannot be messaged: who sees their tasks for them. */
+  guardian_member_id: string | null;
   timezone: string;
   digest_hour: number;
   is_active: number;

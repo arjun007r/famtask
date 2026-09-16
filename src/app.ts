@@ -11,6 +11,7 @@ import { parseMessage } from './agents/parser.ts';
 import {
   digestFooter,
   digestPreamble,
+  firstName,
   renderAssignPicker,
   renderBoard,
   renderConfirmDone,
@@ -61,6 +62,8 @@ import { answerQuery } from './core/services/queries.ts';
 import {
   addMember,
   ensureFamily,
+  isOffline,
+  OFFLINE_CHANNEL,
   getMember,
   getMemberByChannelId,
   listMembers,
@@ -633,7 +636,7 @@ const HELP = [
   '  /next             the single next thing',
   '  /open             unclaimed family tasks',
   '  /waiting          what we are waiting on someone outside the family for',
-  '  /adduser          add someone, on your app or another: <channel>:<id> <name>',
+  '  /adduser          add someone: <id>, <channel>:<id>, or offline <name>',
   '  /lists            all lists',
   '  /list <name>      one list',
   '  /newlist <name>   create a list',
@@ -729,7 +732,11 @@ async function runCommand(
         return {
           text: [
             'Family:',
-            ...members.map((m) => `• ${m.name} — ${m.channel} ${m.channel_user_id}`),
+            ...members.map((m) => {
+              if (!isOffline(m)) return `• ${m.name} — ${m.channel} ${m.channel_user_id}`;
+              const guardian = members.find((g) => g.id === m.guardian_member_id);
+              return `• ${m.name} — no phone, in ${guardian ? firstName(guardian.name) : 'nobody'}'s digest`;
+            }),
           ].join('\n'),
         };
       }
@@ -742,10 +749,26 @@ async function runCommand(
             text: [
               `Usage: /adduser <id> <name>`,
               `       /adduser <channel>:<id> <name>`,
+              `       /adduser offline <name>       for someone with no phone`,
               '',
               `Without a channel I assume ${member.channel}, the one you are on.`,
               `Channels I can reach: ${configuredChannels(deps).join(', ')}`,
             ].join('\n'),
+          };
+        }
+        if (target.toLowerCase() === OFFLINE_CHANNEL) {
+          // A kid or a grandparent: they own tasks and get named on them,
+          // but there is nowhere to message them, so their work rides along
+          // in the digest of whoever is adding them.
+          const kid = await addMember(db, {
+            familyId: member.family_id,
+            name,
+            channel: OFFLINE_CHANNEL,
+            guardianMemberId: member.id,
+            timezone: member.timezone,
+          });
+          return {
+            text: `Added ${kid.name}, who has no phone. You can assign them tasks by name, and their open ones ride along in your digest.`,
           };
         }
         // "whatsapp:15550001111" — the whole point of per-member channels is

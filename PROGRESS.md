@@ -34,6 +34,8 @@
   Reassign / Details. `✓` asks for confirmation first. Taps edit the message
   in place, so the screen reflects the change immediately, and Back restores
   what an overlay covered.
+- **Members with no device** — `channel = 'offline'` plus a guardian whose
+  digest carries their work. A kid can own tasks without owning a phone.
 - **Per-member channels** — `family_members.channel` routes each person to the
   app that reaches them, so a family split across Telegram and WhatsApp still
   shares one task list. One cron tick fans a digest out across all of them.
