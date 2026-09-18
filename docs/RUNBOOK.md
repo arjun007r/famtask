@@ -381,3 +381,24 @@ follow-up rather than dropping them.
 **Only some buttons appear.** Three is the reply-button cap and ten the list
 cap. The adapter keeps one action per task before any second action, so
 everything stays reachable through a task's `⋯` menu.
+
+## Troubleshooting: deploys
+
+**`binding DB of type d1 must have a valid database_id` (error 10021).**
+`wrangler.toml` has the placeholder rather than the real id. It is tracked in
+git, so if the real id was never committed, every `git pull` reverts it and the
+next deploy fails this way. Fix it once and for all:
+
+```bash
+npm run config:d1     # reads it from the account wrangler is logged into
+git add wrangler.toml && git commit -m "Point at the real D1 database"
+```
+
+A `database_id` is an identifier, not a credential -- using it still requires
+account authentication -- so it belongs in the repo. `npm run deploy` now
+refuses to start while a placeholder is present, and says which one.
+
+**`ENOENT ... blake3_js_bg.wasm`.** A partial `node_modules`, usually an
+`npm install` interrupted part-way through unpacking; `.wasm` files are
+frequent casualties. `rm -rf node_modules && npm ci`. If that still fails,
+`npm cache clean --force` and reinstall.
