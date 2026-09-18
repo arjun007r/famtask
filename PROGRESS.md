@@ -29,8 +29,14 @@
 - **One-way Todoist mirror** (`src/sync/`) — off unless `TODOIST_TOKEN` is
   set. A reconcile, not a fire-on-write, so a failed push heals on the next
   pass. Chosen over Google Tasks, whose lists cannot be shared.
-- **Interactive buttons** (`src/core/services/views.ts`) — every listing row
-  carries the obvious action plus `⋯` for Start / Blocked / Needs info /
+- **Finished-work history** — `/done [week|month|quarter|year]`, plus a
+  `completed` parser scope so plain questions work. Rolling days, newest first.
+- **Several tasks from one message** — the agent splits a sentence into as many
+  tasks as it holds, each keeping its own owner; `/add` splits on newlines and
+  semicolons, never on "and".
+- **Interactive buttons** (`src/core/services/views.ts`) — listings are numbered and the
+  keyboard refers to those numbers four to a row, rather than repeating
+  truncated titles one per line. `⋯` opens Start / Blocked / Needs info /
   Reassign / Details. `✓` asks for confirmation first. Taps edit the message
   in place, so the screen reflects the change immediately, and Back restores
   what an overlay covered.

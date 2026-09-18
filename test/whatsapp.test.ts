@@ -11,7 +11,7 @@ import { describe, it, beforeEach } from 'node:test';
 import { memoryDb } from '../src/core/db/sqlite.ts';
 import { addMember, ensureFamily } from '../src/core/services/registry.ts';
 import { resolveList } from '../src/core/services/lists.ts';
-import { createTask, getTaskView } from '../src/core/services/tasks.ts';
+import { createTask, getTaskView, queryTasks } from '../src/core/services/tasks.ts';
 import { decodeAction, encodeAction } from '../src/channel/actions.ts';
 import { collapse, whatsAppChannel } from '../src/whatsapp/channel.ts';
 import { WhatsAppApiError, OUTSIDE_WINDOW, splitForWhatsApp, type WhatsAppApi } from '../src/whatsapp/api.ts';
@@ -45,33 +45,83 @@ function fakeApi(opts: { failWith?: WhatsAppApiError } = {}) {
   return { api, sent, texts: () => sent.filter((b) => b.type === 'text') };
 }
 
-const btn = (label: string, id: string): Button => ({
+const btn = (label: string, id: string, primary = true): Button => ({
   label,
   action: { kind: 'task_done', taskId: id },
+  primary,
 });
 
 describe('whatsapp: button collapsing', () => {
   it('gives every task one tap before giving any task two', () => {
-    // The board renders [✓ task] [⋯] per row; WhatsApp allows ten rows total.
-    const rows: Button[][] = Array.from({ length: 8 }, (_, i) => [
-      btn(`done ${i}`, `tsk_${i}`),
-      { label: '⋯', action: { kind: 'task_menu', taskId: `tsk_${i}` } },
-    ]);
+    // Eight tasks is sixteen buttons against ten slots. What gets dropped
+    // must be a second way into a task, never the only way into one.
+    const rows: Button[][] = [
+      Array.from({ length: 8 }, (_, i) => btn(`✓ ${i + 1}`, `tsk_${i}`)),
+      Array.from({ length: 8 }, (_, i) => ({
+        label: `⋯ ${i + 1}`,
+        action: { kind: 'task_menu' as const, taskId: `tsk_${i}` },
+      })),
+    ];
     const flat = collapse(rows).slice(0, 10);
-    const primaries = flat.filter((b) => b.action.kind === 'task_done');
-    assert.equal(primaries.length, 8, 'no task loses its main action to another task’s menu');
+    assert.equal(
+      flat.filter((b) => b.action.kind === 'task_done').length,
+      8,
+      'no task loses its main action to another task’s menu',
+    );
     assert.equal(flat.length, 10);
   });
 
-  it('keeps row order within a column', () => {
-    const flat = collapse([[btn('a', 'tsk_a')], [btn('b', 'tsk_b')], [btn('c', 'tsk_c')]]);
-    assert.deepEqual(flat.map((b) => b.label), ['a', 'b', 'c']);
+  it('keeps the numbers ascending within each group', () => {
+    const flat = collapse([
+      [btn('✓ 1', 'tsk_a'), btn('✓ 2', 'tsk_b')],
+      [{ label: '⋯ 1', action: { kind: 'task_menu', taskId: 'tsk_a' } }],
+      [btn('✓ 3', 'tsk_c')],
+    ]);
+    assert.deepEqual(flat.map((b) => b.label), ['✓ 1', '✓ 2', '✓ 3', '⋯ 1']);
   });
 
   it('handles ragged and empty keyboards', () => {
     assert.deepEqual(collapse([]), []);
-    const flat = collapse([[btn('a', 'tsk_a'), btn('b', 'tsk_b')], [btn('c', 'tsk_c')]]);
-    assert.deepEqual(flat.map((b) => b.label), ['a', 'c', 'b']);
+    assert.deepEqual(collapse([[]]), []);
+    const flat = collapse([[btn('a', 'tsk_a', false)], [btn('b', 'tsk_b')]]);
+    assert.deepEqual(flat.map((b) => b.label), ['b', 'a'], 'primary first regardless of layout');
+  });
+
+  it('keeps a real digest fully tappable within the ten-row cap', async () => {
+    const { db } = memoryDb();
+    const family = await ensureFamily(db, 'Home');
+    const me = await addMember(db, {
+      familyId: family.id,
+      name: 'Preethi',
+      channel: 'whatsapp',
+      channelUserId: '15550001111',
+      channelChatId: '15550001111',
+    });
+    const home = await resolveList(db, family.id, null);
+    for (let i = 0; i < 8; i += 1) {
+      await createTask(db, {
+        familyId: family.id,
+        listId: home.id,
+        title: `Task number ${i + 1}`,
+        createdBy: me.id,
+        assigneeKind: 'member',
+        assignedTo: me.id,
+      });
+    }
+    const { api, sent } = fakeApi();
+    const board = renderTaskList('Your tasks', await queryTasks(db, { familyId: family.id }));
+    await whatsAppChannel(api).send({ chatId: '15550001111', ...board });
+
+    const rows = (sent.find((b: any) => b.type === 'interactive') as any).interactive.action
+      .sections[0].rows;
+    assert.equal(rows.length, 10);
+    const reachable = new Set(
+      rows.map((r: any) => {
+        const action = decodeAction(r.id);
+        return 'taskId' in action ? action.taskId : null;
+      }),
+    );
+    assert.equal(reachable.size, 8, 'every task on screen has at least one button');
   });
 });
 

@@ -30,7 +30,9 @@ export interface ParsedTask {
 }
 
 export interface ParsedQuery {
-  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'waiting';
+  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'waiting' | 'completed';
+  /** For scope=completed: how far back to look. */
+  period?: 'week' | 'month' | 'quarter' | 'year' | null;
   member?: string | null;
   list?: string | null;
   search?: string | null;
@@ -105,20 +107,25 @@ const TASK_SCHEMA = {
 const QUERY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['scope', 'member', 'list', 'search'],
+  required: ['scope', 'member', 'list', 'search', 'period'],
   properties: {
     scope: {
       type: 'string',
-      enum: ['mine', 'member', 'list', 'unclaimed', 'next', 'all', 'waiting'],
+      enum: ['mine', 'member', 'list', 'unclaimed', 'next', 'all', 'waiting', 'completed'],
       description:
         '"next" for the single most pressing thing ("what\'s next", "what should I do now"); ' +
         '"mine" for the asker\'s whole list; "all" for the family\'s open tasks; ' +
         '"member" for someone else\'s; "list" for one named list; "unclaimed" for unowned work; ' +
-        '"waiting" for everything the family is waiting on an outsider for.',
+        '"waiting" for everything the family is waiting on an outsider for; ' +
+        '"completed" for work already finished ("what did we get done this month").',
     },
     member: nullable({ type: 'string' }, 'Whose tasks, for scope=member.'),
     list: nullable({ type: 'string' }, 'Which list, for scope=list.'),
     search: nullable({ type: 'string' }, 'Words to filter by, or null.'),
+    period: nullable(
+      { type: 'string', enum: ['week', 'month', 'quarter', 'year'] },
+      'How far back, for scope=completed. Null means the past week.',
+    ),
   },
 };
 
@@ -221,6 +228,9 @@ Rules:
 - Moving a deadline on an existing task is a status_update or comment with
   new_due_date set — not a new task.
 - Set priority high only for genuine urgency, not politeness ("please" is not urgent).
+- "What have we finished/done/completed lately" is a query with scope=completed,
+  never a status_update. Pick the period from the words used: "this week" week,
+  "this month" month, "this quarter" quarter, "this year" year.
 - waiting_on is for people OUTSIDE the family — a plumber, the school office,
   an insurer, a relative who is not a member. A family member's name NEVER goes
   in waiting_on; that is what assignee is for. "Ask the plumber to come Thursday"

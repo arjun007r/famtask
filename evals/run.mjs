@@ -152,6 +152,9 @@ function grade(c, parsed) {
     const got = (parsed.new_assignee ?? '').toLowerCase();
     if (got !== e.new_assignee.toLowerCase()) fails.push(`new_assignee=${got || '-'}`);
   }
+  if (e.period && (parsed.query?.period ?? 'week') !== e.period) {
+    fails.push(`period=${parsed.query?.period ?? '-'} want ${e.period}`);
+  }
   if (e.scope && parsed.query?.scope !== e.scope) {
     fails.push(`scope=${parsed.query?.scope ?? '-'} want ${e.scope}`);
   }

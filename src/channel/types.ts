@@ -60,6 +60,12 @@ export interface InboundAction {
 export interface Button {
   label: string;
   action: Action;
+  /**
+   * The action someone actually came for, as opposed to a way into more
+   * options. Channels with room show everything; channels with a hard cap
+   * on buttons keep these and drop the rest.
+   */
+  primary?: boolean;
 }
 
 /** Plain text plus buttons. Deliberately no markup: every channel renders

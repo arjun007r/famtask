@@ -1,7 +1,7 @@
 import type { Db, SqlParam } from '../db/adapter.ts';
 import { newId, nowIso } from '../ids.ts';
 import { UserError } from '../errors.ts';
-import { assertTransition, isClosed, OPEN_STATES } from '../state-machine.ts';
+import { assertTransition, CLOSED_STATES, isClosed, OPEN_STATES } from '../state-machine.ts';
 import { rankScore } from '../priority.ts';
 import type { AssigneeKind, Priority, Task, TaskEvent, TaskState, TaskView } from '../types.ts';
 
@@ -319,6 +319,8 @@ export interface TaskFilter {
   unclaimedOnly?: boolean;
   /** Only tasks hanging on somebody outside the family. */
   waitingOnly?: boolean;
+  /** ISO timestamp; only tasks closed since then. Implies closed states. */
+  closedAfter?: string;
   states?: readonly TaskState[];
   search?: string;
   limit?: number;
@@ -340,7 +342,7 @@ export async function queryTasks(db: Db, filter: TaskFilter): Promise<TaskView[]
   const where = ['t.family_id = ?'];
   const params: SqlParam[] = [filter.familyId];
 
-  const states = filter.states ?? OPEN_STATES;
+  const states = filter.states ?? (filter.closedAfter ? CLOSED_STATES : OPEN_STATES);
   where.push(`t.state IN (${states.map(() => '?').join(', ')})`);
   params.push(...states);
 
@@ -348,6 +350,10 @@ export async function queryTasks(db: Db, filter: TaskFilter): Promise<TaskView[]
     if (filter.listIds.length === 0) return [];
     where.push(`t.list_id IN (${filter.listIds.map(() => '?').join(', ')})`);
     params.push(...filter.listIds);
+  }
+  if (filter.closedAfter) {
+    where.push('t.closed_at IS NOT NULL AND t.closed_at >= ?');
+    params.push(filter.closedAfter);
   }
   if (filter.waitingOnly) {
     where.push("t.waiting_on IS NOT NULL AND t.waiting_on != ''");
@@ -372,11 +378,13 @@ export async function queryTasks(db: Db, filter: TaskFilter): Promise<TaskView[]
     params.push(`%${filter.search}%`, `%${filter.search}%`);
   }
 
-  const rows = await db.all<TaskView>(
-    `${VIEW_SELECT} WHERE ${where.join(' AND ')} ORDER BY t.updated_at DESC LIMIT ?`,
+  // Finished work reads as a timeline, newest first; open work reads by
+  // what was touched last.
+  const order = filter.closedAfter ? 't.closed_at DESC' : 't.updated_at DESC';
+  return db.all<TaskView>(
+    `${VIEW_SELECT} WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ?`,
     [...params, filter.limit ?? 100],
   );
-  return rows;
 }
 
 /** Rank by urgency rather than recency. `shownCounts` demotes tasks a

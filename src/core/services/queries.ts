@@ -6,12 +6,28 @@ import { allLists, findListByName, listsVisibleTo } from './lists.ts';
 import { listMembers, matchMemberByName } from './registry.ts';
 import { queryTasks, rankTasks } from './tasks.ts';
 
+export const PERIODS = { week: 7, month: 30, quarter: 91, year: 365 } as const;
+export type Period = keyof typeof PERIODS;
+
+export function isPeriod(value: unknown): value is Period {
+  return typeof value === 'string' && value in PERIODS;
+}
+
+/** Rolling days rather than calendar boundaries: "the past month" in a family
+ *  chat means the last thirty days, not since the 1st. */
+function since(period: Period, now: Date): string {
+  return new Date(now.getTime() - PERIODS[period] * 24 * 60 * 60 * 1000).toISOString();
+}
+
 export interface Query {
-  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'all' | 'waiting';
+  scope: 'mine' | 'member' | 'list' | 'unclaimed' | 'next' | 'all' | 'waiting' | 'completed';
+  /** For scope=completed. Defaults to the past week. */
+  period?: Period | null;
   member?: string | null;
   list?: string | null;
   search?: string | null;
   limit?: number;
+  now?: Date;
 }
 
 /** On-demand answers. Unlike the digest these ignore the 3-list cap: every
@@ -35,6 +51,20 @@ export async function answerQuery(
         search: query.search ?? undefined,
       });
       return renderTaskList('Everything open:', rankTasks(tasks).slice(0, query.limit ?? 25));
+    }
+    case 'completed': {
+      const period = PERIODS[query.period ?? 'week'] ? (query.period ?? 'week') : 'week';
+      const visible = await listsVisibleTo(db, asker);
+      const done = await queryTasks(db, {
+        familyId,
+        listIds: visible.map((l) => l.id),
+        closedAfter: since(period, query.now ?? new Date()),
+        search: query.search ?? undefined,
+        limit: 50,
+      });
+      if (done.length === 0) return { text: `Nothing finished in the past ${period}.` };
+      const heading = `${done.length} finished in the past ${period}:`;
+      return renderTaskList(heading, done.slice(0, Math.max(limit, 20)), query.now);
     }
     case 'waiting': {
       // The GTD "waiting for" list: work the family cannot finish itself,

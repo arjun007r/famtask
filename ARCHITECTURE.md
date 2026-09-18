@@ -280,6 +280,19 @@ Setting a wait needs free text, so it happens by message. Ending one is a
 button — `✅ <name> came back` appears on the `⋯` menu only when there is a
 wait to end.
 
+## Finished work
+
+Open tasks are the product; finished ones are the evidence it worked.
+`/done [week|month|quarter|year]` answers from `tasks.closed_at`, newest
+first, with a count in the heading. The parser has a matching `completed`
+scope and reads the period from the words used, so "what did we get done this
+month" works.
+
+Windows are **rolling days**, not calendar boundaries — in a family chat "the
+past month" means the last thirty days, not since the 1st. A closed task
+renders with `✓` and offers only `⋯`: there is nothing left to finish, but its
+history is still worth reaching.
+
 ## State machine
 
 `src/core/state-machine.ts`.
@@ -376,11 +389,36 @@ until someone takes it.
 ## Buttons
 
 Every task listing — digest, group board, `/tasks` — is rendered by one
-function, `renderBoard()`. Each open task gets two buttons: the action people
-take most (`✓` to finish, `🙋 Claim` if nobody owns it) and `⋯`, which opens
-that task's full action set: Start, Blocked, Needs info, Reassign, Details.
-Two buttons per row keeps a five-task digest readable on a phone; the rest
-lives one tap away.
+function, `renderBoard()`.
+
+**Buttons refer to the numbers already on screen**, four to a row:
+
+```
+1. ○ !! Schedule roof cleaning for Puyallup home (OVERDUE — was due 2026-09-15) — Arjun
+2. ○ Upload docs for Ownwell (due 2026-09-30) — Arjun
+...
+✓ done · ⋯ more
+
+[ ✓ 1 ][ ✓ 2 ][ ✓ 3 ][ ✓ 4 ]
+[ ✓ 5 ][ ✓ 6 ][ ✓ 7 ]
+[ ⋯ 1 ][ ⋯ 2 ][ ⋯ 3 ][ ⋯ 4 ]
+[ ⋯ 5 ][ ⋯ 6 ][ ⋯ 7 ]
+```
+
+Labelling each button with its task's title was the obvious first design and
+the wrong one: at Telegram's width a title truncates to `✓ Schedule roof
+cleanin…`, which is unreadable, and seven of them stacked under the list
+doubles the height of the message to repeat what it already says. Numbers
+cost one legend line and nothing else.
+
+Tasks and unclaimed work share **one run of numbers**, so `3` means the third
+line whichever section it is in. `⋯` opens a task's full action set: Start,
+Blocked, Needs info, Reassign, Details.
+
+`Button.primary` marks the action someone came for (`✓`, `🙋`) rather than a
+way into more options. Channels with room render everything; WhatsApp, capped
+at ten, keeps the primaries — so what gets dropped is a second way into a
+task, never the only way into one.
 
 `✓` does not finish anything. It opens a confirmation, because a mis-tap in
 front of the family is awkward to walk back. Every other action applies

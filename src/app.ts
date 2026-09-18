@@ -59,7 +59,7 @@ import {
   resolveList,
   toggleDigestList,
 } from './core/services/lists.ts';
-import { answerQuery } from './core/services/queries.ts';
+import { answerQuery, isPeriod, type Period } from './core/services/queries.ts';
 import {
   addMember,
   ensureFamily,
@@ -84,7 +84,7 @@ import {
   setWaitingOn,
   tasksByIds,
 } from './core/services/tasks.ts';
-import type { FamilyMember } from './core/types.ts';
+import type { FamilyMember, TaskView } from './core/types.ts';
 
 export interface AppDeps {
   db: Db;
@@ -685,6 +685,7 @@ const HELP = [
   '  /next             the single next thing',
   '  /open             unclaimed family tasks',
   '  /waiting          what we are waiting on someone outside the family for',
+  '  /done [period]    what got finished: week, month, quarter or year',
   '  /adduser          add someone: <id>, <channel>:<id>, or offline <name>',
   '  /lists            all lists',
   '  /list <name>      one list',
@@ -707,8 +708,11 @@ async function runCommand(
   inbound: InboundMessage,
 ): Promise<RenderedMessage | null> {
   const { db } = deps;
-  const [head, ...rest] = inbound.text.trim().split(/\s+/);
-  const arg = rest.join(' ').trim();
+  const text = inbound.text.trim();
+  const [head, ...rest] = text.split(/\s+/);
+  // Verbatim, not re-joined from tokens: splitting on whitespace and putting
+  // it back with spaces flattens a multi-line /add into one long task.
+  const arg = text.slice(head?.length ?? 0).trim();
   const cmd = (head ?? '').toLowerCase().replace(/@.*$/, '');
 
   return guard(async () => {
@@ -727,6 +731,10 @@ async function runCommand(
         return answerQuery(db, member, { scope: 'unclaimed' });
       case '/waiting':
         return answerQuery(db, member, { scope: 'waiting' });
+      case '/done': {
+        const period = isPeriod(arg.toLowerCase()) ? (arg.toLowerCase() as Period) : 'week';
+        return answerQuery(db, member, { scope: 'completed', period, now: now(deps) });
+      }
       case '/lists':
         return answerQuery(db, member, { scope: 'list' });
       case '/list':
@@ -744,19 +752,35 @@ async function runCommand(
       case '/add': {
         if (!arg) return { text: 'Usage: /add <what needs doing>' };
         const list = await resolveList(db, member.family_id, null);
-        const task = await createTask(db, {
-          familyId: member.family_id,
-          listId: list.id,
-          title: arg,
-          createdBy: member.id,
-          assigneeKind: 'member',
-          assignedTo: member.id,
-          // /add is the no-agent path, but urgency is free to read.
-          priority: inferPriorityFromText(arg) ?? 'medium',
-          sourceChatId: inbound.chatId,
-          sourceMessageId: inbound.messageId,
-        });
-        return renderTaskList('Added:', [await getTaskView(db, task.id)]);
+        // One per line, or separated by semicolons: dumping a list is the
+        // natural way to write several at once, and joining them into a
+        // single task with newlines in the title helps nobody. Never split
+        // on "and" -- "buy milk and eggs" is one errand.
+        const titles = arg
+          .split(/[\n;]+/)
+          .map((t) => t.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+          .filter(Boolean);
+        const created: TaskView[] = [];
+        for (const title of titles) {
+          const made = await createTask(db, {
+            familyId: member.family_id,
+            listId: list.id,
+            title,
+            createdBy: member.id,
+            assigneeKind: 'member',
+            assignedTo: member.id,
+            // /add is the no-agent path, but urgency is free to read.
+            priority: inferPriorityFromText(title) ?? 'medium',
+            sourceChatId: inbound.chatId,
+            sourceMessageId: inbound.messageId,
+          });
+          created.push(await getTaskView(db, made.id));
+        }
+        if (created.length === 0) return { text: 'Usage: /add <what needs doing>' };
+        if (created.length > 1) {
+          return renderTaskList(`Added ${created.length} tasks:`, created, now(deps));
+        }
+        return renderTaskList('Added:', created, now(deps));
       }
 
       case '/settime': {

@@ -60,6 +60,18 @@ export function taskLine(task: TaskView, opts: LineOptions = {}): string {
   return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due}${list}${owner}${waiting}`.trim();
 }
 
+/** Four short labels sit comfortably across a phone; more and they shrink
+ *  to the point of mis-tapping. */
+const BUTTONS_PER_ROW = 4;
+
+function grid(buttons: Button[]): Button[][] {
+  const rows: Button[][] = [];
+  for (let i = 0; i < buttons.length; i += BUTTONS_PER_ROW) {
+    rows.push(buttons.slice(i, i + BUTTONS_PER_ROW));
+  }
+  return rows;
+}
+
 /** A list tag on every line when there is only one list is noise, and it
  *  reads as an assignee. */
 export function multipleLists(tasks: TaskView[]): boolean {
@@ -85,7 +97,10 @@ export function renderBoard(board: BoardView, now: Date = new Date()): RenderedM
   const lines: string[] = [preamble, ''];
   const showList = multipleLists([...tasks, ...unclaimed]);
 
-  if (tasks.length === 0 && unclaimed.length === 0) {
+  // One run of numbers across both sections, so a button can say "3" and
+  // mean the third line whichever section it is in.
+  const numbered = [...tasks, ...unclaimed];
+  if (numbered.length === 0) {
     lines.push('Nothing here right now. 🎉');
   } else {
     tasks.forEach((t, i) => lines.push(taskLine(t, { index: i + 1, now, showList })));
@@ -93,29 +108,35 @@ export function renderBoard(board: BoardView, now: Date = new Date()): RenderedM
 
   if (unclaimed.length > 0) {
     if (tasks.length > 0) lines.push('', 'Up for grabs:');
-    unclaimed.forEach((t) => lines.push(`• ${taskLine(t, { now, showList, showOwner: false })}`));
+    unclaimed.forEach((t, i) =>
+      lines.push(taskLine(t, { index: tasks.length + i + 1, now, showList, showOwner: false })),
+    );
+  }
+  if (numbered.some((t) => !isClosed(t.state))) {
+    lines.push('', unclaimed.length > 0 ? '✓ done · 🙋 claim · ⋯ more' : '✓ done · ⋯ more');
   }
   if (footer) lines.push('', footer);
 
-  const buttons: Button[][] = [];
-  for (const t of tasks) {
-    // A closed task keeps its line -- seeing it tick over is the point --
-    // but offers nothing to tap except a way back into its history.
-    if (isClosed(t.state)) {
-      buttons.push([{ label: `✓ ${truncate(t.title, 24)}`, action: { kind: 'task_show', taskId: t.id } }]);
-      continue;
+  // Buttons refer to the numbers already on screen rather than repeating the
+  // titles. A label like "✓ Schedule roof cleanin…" is unreadable, and seven
+  // of them stacked under the list doubles the message for no information.
+  const primary: Button[] = [];
+  const more: Button[] = [];
+  numbered.forEach((task, i) => {
+    const n = i + 1;
+    const claimable = i >= tasks.length;
+    if (!isClosed(task.state)) {
+      primary.push({
+        label: claimable ? `🙋 ${n}` : `✓ ${n}`,
+        action: claimable
+          ? { kind: 'task_claim', taskId: task.id }
+          : { kind: 'task_done', taskId: task.id },
+        primary: true,
+      });
     }
-    buttons.push([
-      { label: `✓ ${truncate(t.title, 22)}`, action: { kind: 'task_done', taskId: t.id } },
-      { label: '⋯', action: { kind: 'task_menu', taskId: t.id } },
-    ]);
-  }
-  for (const t of unclaimed) {
-    buttons.push([
-      { label: `🙋 Claim: ${truncate(t.title, 20)}`, action: { kind: 'task_claim', taskId: t.id } },
-      { label: '⋯', action: { kind: 'task_menu', taskId: t.id } },
-    ]);
-  }
+    more.push({ label: `⋯ ${n}`, action: { kind: 'task_menu', taskId: task.id } });
+  });
+  const buttons = [...grid(primary), ...grid(more)];
 
   return {
     text: lines.join('\n'),

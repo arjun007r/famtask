@@ -44,6 +44,7 @@ import { sanitize } from '../src/agents/digest-writer.ts';
 import {
   taskLine,
   multipleLists,
+  renderBoard,
   renderTaskList,
   renderTaskMenu,
 } from '../src/channel/format.ts';
@@ -1680,5 +1681,241 @@ describe('a family member with no phone', () => {
     });
     const digest = await buildDigest(env.db, env.arjun, { now });
     assert.equal(digest.items[0]?.title, 'Finish maths homework');
+  });
+});
+
+describe('several tasks from one message', () => {
+  let env: Awaited<ReturnType<typeof setup>>;
+  beforeEach(async () => {
+    env = await setup();
+  });
+
+  it('creates one task per line from an /add dump, stripping list markers', async () => {
+    const tg = {
+      chatId: '1001',
+      chatType: 'dm' as const,
+      userId: '1001',
+      userDisplayName: 'Arjun',
+      messageId: 'm1',
+      addressedToBot: true,
+    };
+    const sent: OutboundMessage[] = [];
+    const deps: AppDeps = {
+      db: env.db,
+      channel: {
+        name: 'telegram',
+        async send(m) {
+          sent.push(m);
+          return String(sent.length);
+        },
+        async acknowledge() {},
+      },
+      anthropic: null,
+    };
+    await handleInboundMessage(deps, {
+      ...tg,
+      text: '/add Book the dentist\n- Renew the passport\n2) Pay the water bill; Call the vet',
+    });
+
+    const titles = (await queryTasks(env.db, { familyId: env.familyId })).map((t) => t.title).sort();
+    assert.deepEqual(titles, [
+      'Book the dentist',
+      'Call the vet',
+      'Pay the water bill',
+      'Renew the passport',
+    ]);
+    assert.match(sent[0]!.text, /Added 4 tasks/);
+  });
+
+  it('still treats a single errand with "and" in it as one task', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', '/add buy milk and eggs');
+    await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [{ title: 'Buy milk and eggs' }],
+    });
+    assert.equal((await queryTasks(env.db, { familyId: env.familyId })).length, 1);
+  });
+
+  it('creates every task the agent split out of one sentence', async () => {
+    const ctx = ctxFor(env.familyId, env.arjun, 'dm', 'book the window cleaner and order dog food');
+    const result = await applyParsed(env.db, ctx, {
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [
+        { title: 'Book the window cleaner' },
+        { title: 'Order more dog food', assignee: 'Priya' },
+      ],
+    });
+    const tasks = await queryTasks(env.db, { familyId: env.familyId });
+    assert.equal(tasks.length, 2);
+    // Each keeps its own assignee rather than inheriting the first one's.
+    assert.equal(tasks.find((t) => t.title.startsWith('Order'))!.assigned_to, env.priya.id);
+    assert.equal(tasks.find((t) => t.title.startsWith('Book'))!.assigned_to, env.arjun.id);
+    assert.match(result.reply!.text, /Added 2 tasks/);
+  });
+});
+
+describe('what got finished', () => {
+  let env: Awaited<ReturnType<typeof setup>>;
+  const NOW = new Date('2026-09-18T12:00:00Z');
+
+  beforeEach(async () => {
+    env = await setup();
+  });
+
+  async function closed(title: string, daysAgo: number) {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title,
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    await setState(env.db, task.id, 'done', env.arjun.id);
+    const when = new Date(NOW.getTime() - daysAgo * 86400000).toISOString();
+    await env.db.run('UPDATE tasks SET closed_at = ? WHERE id = ?', [when, task.id]);
+    return task;
+  }
+
+  it('answers for a week, month, quarter and year, each widening the net', async () => {
+    await closed('Paid the water bill', 2);
+    await closed('Serviced the boiler', 20);
+    await closed('Filed the tax return', 60);
+    await closed('Replaced the roof', 200);
+
+    const counts: Record<string, number> = {};
+    for (const period of ['week', 'month', 'quarter', 'year'] as const) {
+      const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period, now: NOW });
+      counts[period] = (answer.text.match(/^\d+\. /gm) ?? []).length;
+    }
+    assert.deepEqual(counts, { week: 1, month: 2, quarter: 3, year: 4 });
+  });
+
+  it('defaults to the past week', async () => {
+    await closed('Paid the water bill', 2);
+    await closed('Serviced the boiler', 20);
+    const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', now: NOW });
+    assert.match(answer.text, /past week/);
+    assert.match(answer.text, /Paid the water bill/);
+    assert.doesNotMatch(answer.text, /Serviced the boiler/);
+  });
+
+  it('never mixes open work into the history', async () => {
+    await closed('Paid the water bill', 2);
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Still to do',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period: 'year', now: NOW });
+    assert.doesNotMatch(answer.text, /Still to do/);
+  });
+
+  it('says so plainly when nothing was finished', async () => {
+    const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period: 'week', now: NOW });
+    assert.match(answer.text, /Nothing finished in the past week/);
+  });
+
+  it('lists newest first, and offers no done button on a done task', async () => {
+    await closed('Older', 5);
+    await closed('Newer', 1);
+    const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period: 'week', now: NOW });
+    assert.ok(answer.text.indexOf('Newer') < answer.text.indexOf('Older'));
+    const kinds = (answer.buttons ?? []).flat().map((b) => b.action.kind);
+    assert.ok(!kinds.includes('task_done'), 'nothing left to finish');
+    assert.ok(kinds.includes('task_menu'), 'but the history is still reachable');
+  });
+
+  it('counts the open ones out of the heading', async () => {
+    await closed('One', 1);
+    await closed('Two', 2);
+    const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period: 'week', now: NOW });
+    assert.match(answer.text, /^2 finished in the past week:/);
+  });
+});
+
+describe('the board keyboard', () => {
+  let env: Awaited<ReturnType<typeof setup>>;
+  beforeEach(async () => {
+    env = await setup();
+  });
+
+  it('refers to the numbers on screen instead of repeating truncated titles', async () => {
+    for (const title of ['Schedule roof cleaning for the Puyallup home', 'Upload docs for Ownwell']) {
+      await createTask(env.db, {
+        familyId: env.familyId,
+        listId: env.home.id,
+        title,
+        createdBy: env.arjun.id,
+        assigneeKind: 'member',
+        assignedTo: env.arjun.id,
+      });
+    }
+    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    const labels = board.buttons!.flat().map((b) => b.label);
+    assert.deepEqual(labels, ['✓ 1', '✓ 2', '⋯ 1', '⋯ 2']);
+    for (const label of labels) {
+      assert.ok(!label.includes('…'), `"${label}" should never need truncating`);
+    }
+  });
+
+  it('packs four to a row rather than one per line', async () => {
+    for (let i = 0; i < 7; i += 1) {
+      await createTask(env.db, {
+        familyId: env.familyId,
+        listId: env.home.id,
+        title: `Task ${i + 1}`,
+        createdBy: env.arjun.id,
+        assigneeKind: 'member',
+        assignedTo: env.arjun.id,
+      });
+    }
+    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    assert.deepEqual(board.buttons!.map((r) => r.length), [4, 3, 4, 3]);
+  });
+
+  it('numbers unclaimed work in the same run, so a button number is unambiguous', async () => {
+    const mine = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Mine',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    const open = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Anyones',
+      createdBy: env.arjun.id,
+      assigneeKind: 'group',
+    });
+    const board = renderBoard({
+      preamble: 'Morning',
+      tasks: [await getTaskView(env.db, mine.id)],
+      unclaimed: [await getTaskView(env.db, open.id)],
+    });
+    assert.match(board.text, /^1\. .*Mine/m);
+    assert.match(board.text, /^2\. .*Anyones/m);
+    const labels = board.buttons!.flat().map((b) => b.label);
+    assert.deepEqual(labels, ['✓ 1', '🙋 2', '⋯ 1', '⋯ 2']);
+  });
+
+  it('explains the symbols once, not per line', async () => {
+    await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Something',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    assert.equal((board.text.match(/✓ done/g) ?? []).length, 1);
   });
 });

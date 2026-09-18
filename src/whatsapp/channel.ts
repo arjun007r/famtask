@@ -163,21 +163,16 @@ async function sendTemplate(
 }
 
 /**
- * Flatten a keyboard into the few buttons WhatsApp allows, taking each row's
- * first button before any row's second. The engine puts the action people
- * actually want first in every row, so this keeps one tap available for every
- * task before spending a slot on a second tap for any of them.
+ * Flatten a keyboard into the few buttons WhatsApp allows, keeping every
+ * button the renderer marked primary before any that it did not. Ten slots
+ * against a digest's worth of actions means something is dropped; what gets
+ * dropped should be a second way into a task, never the only way into one.
+ *
+ * Order within each group is preserved, so the numbers still ascend.
  */
 export function collapse(rows: Button[][]): Button[] {
-  const width = Math.max(0, ...rows.map((r) => r.length));
-  const ordered: Button[] = [];
-  for (let col = 0; col < width; col += 1) {
-    for (const row of rows) {
-      const button = row[col];
-      if (button) ordered.push(button);
-    }
-  }
-  return ordered;
+  const flat = rows.flat();
+  return [...flat.filter((b) => b.primary), ...flat.filter((b) => !b.primary)];
 }
 
 function fit(label: string, max: number): string {
