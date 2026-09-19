@@ -382,6 +382,32 @@ follow-up rather than dropping them.
 cap. The adapter keeps one action per task before any second action, so
 everything stays reachable through a task's `⋯` menu.
 
+## Deploying
+
+Pushing to `main` deploys, via `.github/workflows/deploy.yml`. It typechecks,
+runs the tests, fills in the D1 id, **applies migrations, then deploys** — in
+that order, because a deploy ahead of its schema takes the bot down until
+somebody notices. A red test never ships.
+
+One-time setup, both doable from a phone at
+`github.com/arjun007r/famtask/settings/secrets/actions`:
+
+| Secret | Where it comes from |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create. Template: **Edit Cloudflare Workers**, plus **D1 → Edit** on the same account. |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages → Account details |
+
+Never paste either into a chat, a commit, or `wrangler.toml`.
+
+To deploy without pushing anything — say after changing a secret — open the
+**Actions** tab, pick **Deploy**, and Run workflow. That works from a phone.
+
+Deploying by hand still works and is unchanged:
+
+```bash
+npm run db:migrate && npm run deploy
+```
+
 ## Troubleshooting: deploys
 
 **`binding DB of type d1 must have a valid database_id` (error 10021).**

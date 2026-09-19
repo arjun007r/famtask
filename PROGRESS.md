@@ -2,6 +2,10 @@
 
 ## Built
 
+- **Deploy on push** (`.github/workflows/deploy.yml`) — typecheck, tests,
+  migrations, deploy, health check, in that order. The two steps easiest to
+  forget by hand cannot be forgotten here.
+
 - **Schema** (`migrations/`) — families, members, lists, per-member digest
   list picks, tasks, task events (thread + audit), digest sends, update
   dedupe, scheduler state. Runs on D1 and `node:sqlite` unchanged.
