@@ -69,13 +69,26 @@ export interface ParseContext {
 /**
  * Under `strict: true` a property that is not in `required` is never emitted
  * — the compiled schema simply does not allow it. So every property is
- * required, and "optional" is expressed as anyOf-with-null. Type arrays
- * (`type: ["string", "null"]`) are rejected outright; anyOf is the union
- * mechanism strict tool use supports.
+ * required, and "optional" has to be expressed some other way.
+ *
+ * anyOf-with-null was that way, until the schema outgrew a hard API limit of
+ * **16 union-typed parameters** and every parse started failing with a 400.
+ * Each optional field cost a union, so the schema could only ever grow to a
+ * fixed size before breaking in production rather than in a test.
+ *
+ * So optional is now the empty string, and an enum carries `''` as a member.
+ * No unions, no ceiling, and `normalize()` turns it all back into null on the
+ * way in so nothing downstream knows the difference.
  */
-const nullable = (schema: Record<string, unknown>, description: string) => ({
-  anyOf: [schema, { type: 'null' }],
-  description,
+const optional = (description: string) => ({
+  type: 'string',
+  description: `${description} Empty string when it does not apply.`,
+});
+
+const optionalEnum = (values: string[], description: string) => ({
+  type: 'string',
+  enum: [...values, ''],
+  description: `${description} Empty string when it does not apply.`,
 });
 
 const TASK_SCHEMA = {
@@ -84,23 +97,17 @@ const TASK_SCHEMA = {
   required: ['title', 'description', 'list', 'assignee', 'waiting_on', 'priority', 'due_date'],
   properties: {
     title: { type: 'string', description: 'Short imperative title.' },
-    description: nullable({ type: 'string' }, 'Extra detail, or null.'),
-    list: nullable(
-      { type: 'string' },
-      'An existing list name if one clearly fits, otherwise a new one, or null if unsure.',
+    description: optional('Extra detail.'),
+    list: optional('An existing list name if one clearly fits, otherwise a new one.'),
+    assignee: optional(
+      'A family member name, or "group" if it is for whoever picks it up.',
     ),
-    assignee: nullable(
-      { type: 'string' },
-      'A family member name, or "group" if it is for whoever picks it up, or null if unclear.',
-    ),
-    waiting_on: nullable(
-      { type: 'string' },
+    waiting_on: optional(
       'Somebody OUTSIDE the family the task depends on — a contractor, a shop, ' +
-        'a doctor\'s office, a relative, a company. Never a family member. Null ' +
-        'when the family can just do the thing themselves.',
+        "a doctor's office, a relative, a company. Never a family member.",
     ),
-    priority: nullable({ type: 'string', enum: ['high', 'medium', 'low'] }, 'Or null.'),
-    due_date: nullable({ type: 'string' }, 'YYYY-MM-DD resolved from today, or null.'),
+    priority: optionalEnum(['high', 'medium', 'low'], 'How urgent it genuinely is.'),
+    due_date: optional('YYYY-MM-DD resolved from today.'),
   },
 };
 
@@ -119,12 +126,12 @@ const QUERY_SCHEMA = {
         '"waiting" for everything the family is waiting on an outsider for; ' +
         '"completed" for work already finished ("what did we get done this month").',
     },
-    member: nullable({ type: 'string' }, 'Whose tasks, for scope=member.'),
-    list: nullable({ type: 'string' }, 'Which list, for scope=list.'),
-    search: nullable({ type: 'string' }, 'Words to filter by, or null.'),
-    period: nullable(
-      { type: 'string', enum: ['week', 'month', 'quarter', 'year'] },
-      'How far back, for scope=completed. Null means the past week.',
+    member: optional('Whose tasks, for scope=member.'),
+    list: optional('Which list, for scope=list.'),
+    search: optional('Words to filter by.'),
+    period: optionalEnum(
+      ['week', 'month', 'quarter', 'year'],
+      'How far back, for scope=completed. Empty means the past week.',
     ),
   },
 };
@@ -162,42 +169,35 @@ export const TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
       type: 'number',
       description: '0 to 1. Below 0.5 the caller ignores the message.',
     },
-    tasks: nullable(
-      { type: 'array', items: TASK_SCHEMA },
-      'Tasks to create. Required when intent is new_task — at least one, never empty. Null otherwise.',
+    tasks: {
+      type: 'array',
+      items: TASK_SCHEMA,
+      description:
+        'Tasks to create. Required when intent is new_task — at least one, never ' +
+        'empty. Empty array otherwise.',
+    },
+    target_task_hint: optional(
+      'Words identifying the existing task being updated or discussed.',
     ),
-    target_task_hint: nullable(
-      { type: 'string' },
-      'Words identifying the existing task being updated or discussed, or null.',
+    new_state: optionalEnum(
+      ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled'],
+      'The state the message moves an existing task to.',
     ),
-    new_state: nullable(
-      {
-        type: 'string',
-        enum: ['todo', 'in_progress', 'blocked', 'needs_clarification', 'done', 'cancelled'],
-      },
-      'The state the message moves an existing task to, or null.',
-    ),
-    new_due_date: nullable(
-      { type: 'string' },
-      'YYYY-MM-DD when the message moves an existing task\'s deadline, or null.',
-    ),
-    new_assignee: nullable(
-      { type: 'string' },
+    new_due_date: optional("YYYY-MM-DD when the message moves an existing task's deadline."),
+    new_assignee: optional(
       'A family member name; "group" when it is thrown open to the family for ' +
         'whoever picks it up ("someone else grab it"); "unassigned" only when it ' +
-        'should explicitly belong to nobody. Only for intent=reassignment, else null.',
+        'should explicitly belong to nobody. Only for intent=reassignment.',
     ),
-    new_waiting_on: nullable(
-      { type: 'string' },
+    new_waiting_on: optional(
       'The outsider an existing task now hangs on; the exact string "none" when ' +
-        'they have come back and the wait is over. Null when the message says ' +
-        'nothing about waiting on anyone.',
+        'they have come back and the wait is over.',
     ),
-    comment: nullable(
-      { type: 'string' },
-      'Text to append to the task thread, or null.',
-    ),
-    query: nullable(QUERY_SCHEMA, 'Only for intent=query. Null otherwise.'),
+    comment: optional('Text to append to the task thread.'),
+    query: {
+      anyOf: [QUERY_SCHEMA, { type: 'null' }],
+      description: 'Only for intent=query. Null otherwise.',
+    },
   },
 };
 
@@ -216,12 +216,14 @@ Intents:
 Rules:
 - If intent is new_task you MUST fill in tasks with at least one entry. An
   empty tasks array with intent new_task is never correct.
+- Every field is required. Where a field does not apply, give it the empty
+  string "" rather than inventing a value — "" is how you say "not stated".
 - Prefer chitchat when unsure. A missed task is recoverable; a chat log full of
   junk tasks is not. In a group chat especially, only pull out a task when
   someone is clearly asking for something to be done.
 - One message can contain several new tasks. Split them.
 - Only use a list name from the known lists unless the message clearly names a
-  new one. Leave list null rather than guessing.
+  new one. Leave list empty rather than guessing.
 - Only use assignee names from the known family members. Use "group" when the
   message is addressed to everyone or to no one in particular.
 - Resolve relative dates ("tomorrow", "Friday") against today's date.
@@ -261,7 +263,7 @@ export async function parseMessage(
     text,
   ].join('\n');
 
-  return structuredCall<ParsedMessage>(client, {
+  const parsed = await structuredCall<ParsedMessage>(client, {
     system: SYSTEM,
     input,
     effort: 'low',
@@ -272,4 +274,45 @@ export async function parseMessage(
       input_schema: TOOL_SCHEMA,
     },
   });
+  return parsed ? normalize(parsed) : null;
+}
+
+/**
+ * The schema says "empty string" where the rest of the codebase says null,
+ * because unions are rationed and optionality is not. Converting here keeps
+ * that entirely inside the agent layer: every caller still sees nulls.
+ *
+ * Exported for the eval harness, which scores raw tool output.
+ */
+export function normalize(parsed: ParsedMessage): ParsedMessage {
+  const blank = <T>(value: T): T | null =>
+    typeof value === 'string' && value.trim() === '' ? null : value;
+
+  return {
+    ...parsed,
+    tasks: (parsed.tasks ?? []).map((task) => ({
+      ...task,
+      description: blank(task.description),
+      list: blank(task.list),
+      assignee: blank(task.assignee),
+      waiting_on: blank(task.waiting_on),
+      priority: blank(task.priority),
+      due_date: blank(task.due_date),
+    })),
+    target_task_hint: blank(parsed.target_task_hint),
+    new_state: blank(parsed.new_state),
+    new_due_date: blank(parsed.new_due_date),
+    new_assignee: blank(parsed.new_assignee),
+    new_waiting_on: blank(parsed.new_waiting_on),
+    comment: blank(parsed.comment),
+    query: parsed.query
+      ? {
+          ...parsed.query,
+          member: blank(parsed.query.member),
+          list: blank(parsed.query.list),
+          search: blank(parsed.query.search),
+          period: blank(parsed.query.period),
+        }
+      : null,
+  };
 }

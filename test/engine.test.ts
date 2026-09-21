@@ -48,7 +48,7 @@ import {
   renderTaskList,
   renderTaskMenu,
 } from '../src/channel/format.ts';
-import { TOOL_SCHEMA } from '../src/agents/parser.ts';
+import { normalize, TOOL_SCHEMA } from '../src/agents/parser.ts';
 import { decodeAction, encodeAction } from '../src/channel/actions.ts';
 import { parseUpdate } from '../src/telegram/webhook.ts';
 import {
@@ -815,10 +815,13 @@ describe('agent outage', () => {
 
 describe('strict tool schema', () => {
   /**
-   * Two rules, both learned the hard way against the live API:
-   * a property missing from `required` is never emitted at all, and a JSON
-   * Schema type array is rejected with a 400. Neither shows up in a unit
-   * test of the parser, so assert the schema shape directly.
+   * Three rules, all learned the hard way against the live API: a property
+   * missing from `required` is never emitted at all; a JSON Schema type array
+   * is rejected with a 400; and more than 16 union-typed parameters is
+   * rejected with a 400 too. None of them shows up in a unit test of the
+   * parser, and the third one broke every parse in production the day a
+   * perfectly reasonable optional field became the seventeenth. So assert the
+   * schema shape directly.
    */
   function walk(node: unknown, path: string, check: (o: any, p: string) => void): void {
     if (!node || typeof node !== 'object') return;
@@ -847,11 +850,48 @@ describe('strict tool schema', () => {
     walk(TOOL_SCHEMA, 'root', () => {});
   });
 
+  it('stays under the API cap on union-typed parameters', () => {
+    // Optionality used to cost a union each, which gave the schema a hard
+    // ceiling it grew into silently. The budget is 16; anything close to it
+    // means the next optional field belongs as an empty-string sentinel.
+    const unions: string[] = [];
+    const count = (node: unknown, path: string): void => {
+      if (!node || typeof node !== 'object') return;
+      const obj = node as Record<string, any>;
+      for (const [key, value] of Object.entries(obj.properties ?? {})) {
+        const v = value as Record<string, unknown>;
+        if (v['anyOf'] || Array.isArray(v['type'])) unions.push(`${path}${key}`);
+        count(v, `${path}${key}.`);
+        if (v['items']) count(v['items'], `${path}${key}[].`);
+        for (const alt of (v['anyOf'] as unknown[]) ?? []) {
+          count(alt, `${path}${key}.`);
+          if ((alt as Record<string, unknown>)?.['items']) {
+            count((alt as Record<string, unknown>)['items'], `${path}${key}[].`);
+          }
+        }
+      }
+    };
+    count(TOOL_SCHEMA, '');
+    assert.ok(
+      unions.length <= 12,
+      `${unions.length} union-typed parameters, API rejects above 16: ${unions.join(', ')}`,
+    );
+  });
+
+  it('spells optional as an empty string, not as a missing value', () => {
+    const task = (TOOL_SCHEMA.properties as any).tasks.items.properties;
+    assert.equal(task.assignee.type, 'string', 'no union');
+    assert.ok(/empty string/i.test(task.assignee.description));
+    // An optional enum carries '' as a member rather than becoming a union.
+    assert.ok(task.priority.enum.includes(''), 'priority needs an "unstated" member');
+    assert.ok(!task.priority.anyOf);
+  });
+
   it('still covers every field the engine reads', () => {
     const props = Object.keys(TOOL_SCHEMA.properties as object);
     for (const field of [
       'intent', 'confidence', 'tasks', 'target_task_hint',
-      'new_state', 'new_due_date', 'new_assignee', 'comment', 'query',
+      'new_state', 'new_due_date', 'new_assignee', 'new_waiting_on', 'comment', 'query',
     ]) {
       assert.ok(props.includes(field), `schema lost ${field}`);
     }
@@ -1917,5 +1957,54 @@ describe('the board keyboard', () => {
     });
     const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
     assert.equal((board.text.match(/✓ done/g) ?? []).length, 1);
+  });
+});
+
+describe('empty string is how the schema says null', () => {
+  it('turns every blank the model emits back into null', () => {
+    const parsed = normalize({
+      intent: 'new_task',
+      confidence: 0.9,
+      tasks: [
+        {
+          title: 'Create resume for MAI',
+          description: '',
+          list: '',
+          assignee: '',
+          waiting_on: '',
+          priority: '',
+          due_date: '2026-09-22',
+        } as never,
+      ],
+      target_task_hint: '',
+      new_state: '' as never,
+      new_due_date: '',
+      new_assignee: '',
+      new_waiting_on: '',
+      comment: '',
+      query: { scope: 'mine', member: '', list: '', search: '', period: '' as never },
+    });
+
+    const [task] = parsed.tasks!;
+    assert.equal(task!.description, null);
+    assert.equal(task!.assignee, null);
+    assert.equal(task!.priority, null);
+    assert.equal(task!.waiting_on, null);
+    assert.equal(task!.due_date, '2026-09-22', 'a real value is untouched');
+    assert.equal(parsed.new_state, null);
+    assert.equal(parsed.comment, null);
+    assert.equal(parsed.query!.period, null);
+    assert.equal(parsed.query!.scope, 'mine');
+  });
+
+  it('leaves whitespace-only strings as null too', () => {
+    const parsed = normalize({ intent: 'comment', confidence: 0.8, comment: '   ' });
+    assert.equal(parsed.comment, null);
+  });
+
+  it('survives a response with no tasks and no query', () => {
+    const parsed = normalize({ intent: 'chitchat', confidence: 0.9 });
+    assert.deepEqual(parsed.tasks, []);
+    assert.equal(parsed.query, null);
   });
 });

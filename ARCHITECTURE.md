@@ -241,6 +241,31 @@ engine answers with the real digest.
 A member whose digest fails to send is logged and skipped; one unreachable
 person never costs the rest of the family their morning.
 
+## Two hard limits in strict tool use
+
+Both of these are 400s from the live API, invisible to a unit test of the
+parser, and both have broken parsing in production once.
+
+**Every property must be in `required`.** A property left out of it is not
+optional — under `strict: true` it is never emitted at all. The first eval run
+scored 0.28 because every optional field came back absent.
+
+**At most 16 union-typed parameters.** `anyOf: [schema, {type:'null'}]` was how
+optionality was expressed, so each optional field cost one union and the schema
+had a ceiling it grew into silently — the seventeenth optional field broke
+every free-text message with *"Schemas contains too many parameters with union
+types"*.
+
+So optionality is now **the empty string**, and an optional enum carries `''`
+as a member. One union remains, `query`. `normalize()` in `src/agents/parser.ts`
+converts every blank back to `null` as the response comes in, so the rest of
+the codebase never sees the sentinel — and the eval harness, which calls
+`parseMessage`, scores exactly what production reads.
+
+`test/engine.test.ts` asserts all three invariants against the schema directly,
+including a union budget well under the cap, because none of them surfaces any
+other way until a message fails.
+
 ## Waiting on someone outside the family
 
 A large share of household admin is not work the family does — it is work the
