@@ -21,7 +21,27 @@ try {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
 } catch {
-  console.error('Could not list D1 databases. Run `npx wrangler login` first.');
+  // Two very different failures reach here, and telling someone to run
+  // `wrangler login` inside CI -- where there is no browser and no one to
+  // click anything -- sends them the wrong way entirely.
+  console.error(
+    process.env.CLOUDFLARE_API_TOKEN
+      ? [
+          '',
+          'Cloudflare refused the API token (error 10000 is an authentication',
+          'error, not a missing login).',
+          '',
+          'The "Edit Cloudflare Workers" template does not grant D1. Edit the',
+          'token at dash.cloudflare.com/profile/api-tokens and add:',
+          '',
+          '  Account · D1 · Edit',
+          '',
+          'Check too that the token belongs to the same account as',
+          'CLOUDFLARE_ACCOUNT_ID, and that it was pasted without stray',
+          'whitespace.',
+        ].join('\n')
+      : 'No CLOUDFLARE_API_TOKEN set. Run `npx wrangler login` first, or set the token.',
+  );
   process.exit(1);
 }
 

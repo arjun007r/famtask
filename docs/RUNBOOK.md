@@ -363,6 +363,12 @@ her in the "Up for grabs" tail of her own digest, with Claim buttons.
 
 ### Troubleshooting
 
+**`Authentication error [code: 10000]` in the deploy workflow.** The token
+reached Cloudflare but is not allowed to touch D1. Edit it at
+`dash.cloudflare.com/profile/api-tokens` and add `Account · D1 · Edit`. The
+Workers template alone is not enough. Worth confirming the token belongs to
+the same account as `CLOUDFLARE_ACCOUNT_ID` too.
+
 **Webhook verification fails.** `WHATSAPP_VERIFY_TOKEN` does not match what
 you typed in the Meta dashboard. The Worker returns a bare 403.
 
@@ -394,7 +400,7 @@ One-time setup, both doable from a phone at
 
 | Secret | Where it comes from |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create. Template: **Edit Cloudflare Workers**, plus **D1 → Edit** on the same account. |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create. Start from **Edit Cloudflare Workers**, then **add `Account · D1 · Edit`** — the template does not include it, and without it both the id lookup and the migrations fail with error 10000. |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages → Account details |
 
 Never paste either into a chat, a commit, or `wrangler.toml`.
