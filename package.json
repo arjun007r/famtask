@@ -13,7 +13,8 @@
     "db:migrate": "wrangler d1 migrations apply famtask --remote",
     "eval": "node --experimental-strip-types --disable-warning=ExperimentalWarning evals/run.mjs",
     "predeploy": "node scripts/check-config.mjs",
-    "config:d1": "node scripts/set-d1-id.mjs"
+    "config:d1": "node scripts/set-d1-id.mjs",
+    "check:cloudflare": "node scripts/check-cloudflare.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260910.1",
