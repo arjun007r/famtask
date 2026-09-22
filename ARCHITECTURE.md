@@ -122,7 +122,7 @@ which is how it came to be read as one.
 
 **Messages are plain text, no markup.** Every channel renders emphasis
 differently and Telegram's MarkdownV2 escaping is a reliable source of
-500s. Structure comes from line breaks, numbering, and a few state glyphs.
+500s. Structure comes from line breaks, indentation, and a few text state glyphs.
 
 ## Data model
 
@@ -302,7 +302,7 @@ member or a stand-in for the group, so assignment resolution always wins.
 The eval suite covers both directions.
 
 Setting a wait needs free text, so it happens by message. Ending one is a
-button — `✅ <name> came back` appears on the `⋯` menu only when there is a
+button — `✓ <name> came back` appears on the `⋯` menu only when there is a
 wait to end.
 
 ## Finished work
@@ -416,38 +416,62 @@ until someone takes it.
 Every task listing — digest, group board, `/tasks` — is rendered by one
 function, `renderBoard()`.
 
-**Buttons refer to the numbers already on screen**, four to a row:
+**The board says what; a second step asks which.** Three buttons, however
+long the list:
 
 ```
-1. ○ !! Schedule roof cleaning for Puyallup home (OVERDUE — was due 2026-09-15) — Arjun
-2. ○ Upload docs for Ownwell (due 2026-09-30) — Arjun
-...
-✓ done · ⋯ more
+Morning Arjun — here's your day.
+5 open · 1 overdue
 
-[ ✓ 1 ][ ✓ 2 ][ ✓ 3 ][ ✓ 4 ]
-[ ✓ 5 ][ ✓ 6 ][ ✓ 7 ]
-[ ⋯ 1 ][ ⋯ 2 ][ ⋯ 3 ][ ⋯ 4 ]
-[ ⋯ 5 ][ ⋯ 6 ][ ⋯ 7 ]
+!  Fix garage door
+    was due yesterday · Preethi · waiting on the repair guy
+
+▶  Resume for MAI
+    tomorrow · you
+
+○  Pay school fees
+    Sep 30 · Preethi
+
+UP FOR GRABS
+
+○  Grocery run
+    today
+
+[ ✓ Complete ]  [ + Claim ]  [ ⋯ Manage ]
 ```
 
-Labelling each button with its task's title was the obvious first design and
-the wrong one: at Telegram's width a title truncates to `✓ Schedule roof
-cleanin…`, which is unreadable, and seven of them stacked under the list
-doubles the height of the message to repeat what it already says. Numbers
-cost one legend line and nothing else.
+Two designs were tried and discarded before this one. Labelling each button
+with its task's title truncates to `✓ Schedule roof cleanin…` at Telegram's
+width. Labelling them with line numbers — `[ ✓ 1 ][ ✓ 2 ]…` — reads cleanly
+in isolation but puts two buttons per task on screen, doubling the height of
+every message, and makes the reader resolve a number against a line before
+every tap.
 
-Tasks and unclaimed work share **one run of numbers**, so `3` means the third
-line whichever section it is in. `⋯` opens a task's full action set: Start,
-Blocked, Needs info, Reassign, Details.
+Tapping one of the three opens a **picker** (`renderPicker`) drawn over the
+board in the same message: one row per task, carrying the title in words.
+That row is the confirmation a numbered button could never give — you tap
+the name of the thing you mean — which is why finishing from the picker
+applies straight away rather than asking a second time. The safety net is
+`↺ Reopen`, which a closed task leads with in its `⋯` menu.
 
-`Button.primary` marks the action someone came for (`✓`, `🙋`) rather than a
-way into more options. Channels with room render everything; WhatsApp, capped
-at ten, keeps the primaries — so what gets dropped is a second way into a
-task, never the only way into one.
+The picker owns no task ids. It reads them off the board underneath, so it
+can never offer a row the board is not showing. That is also why the board
+caps at **nine** entries: WhatsApp allows ten list rows and the picker needs
+one for Back. A board holding more says `…and N more` rather than listing
+what nothing could act on.
 
-`✓` does not finish anything. It opens a confirmation, because a mis-tap in
-front of the family is awkward to walk back. Every other action applies
-immediately.
+`Button.primary` marks the action someone came for rather than a way into
+more options. Channels with room render everything; WhatsApp, capped at ten,
+keeps the primaries.
+
+`✓ Done` on the `⋯` menu still opens a confirmation — it is one small
+button among six, not a named row. Every other action applies immediately.
+
+**No emoji in the furniture.** `⛔ ❓ 🙋 👤` render at a different size on
+every phone and leave the left margin ragged. State glyphs are text: `○`
+to do, `▶` in progress, `⊘` blocked, `?` needs info, `✓` done, `✕`
+cancelled — and `!` for anything overdue, which outranks the state because a
+late task is the one thing a reader should find without reading.
 
 ### Views
 
@@ -458,9 +482,9 @@ On every tap the engine replays that view against live rows and edits the
 message in place. Two things follow:
 
 - The screen changes the moment you tap. A finished task ticks over to `✓`
-  where it sits; a claimed task moves out of "up for grabs" into the numbered
+  where it sits; a claimed task moves out of "up for grabs" into the main
   list. A toast alone is not feedback — it disappears.
-- Overlays (menu, confirm, reassign, detail) nest the view they cover, so
+- Overlays (pick, menu, confirm, reassign, detail) nest the view they cover, so
   Back and Cancel restore exactly what was underneath, and applying an action
   returns to the listing rather than to a menu for a task that is now done.
 
@@ -657,8 +681,6 @@ transferred.
 - **Digest rotation.** The `timesShown` penalty is a guess at the right feel.
   If a stale task keeps reappearing, raise the coefficient; if things vanish
   too fast, lower it.
-- **Reopening a `done` task from a button.** A finished task keeps its line
-  and offers Details, but reopening it still takes a message. Fine for now.
 - **`task_events` growth.** Unbounded. Irrelevant at family scale; would need
   pruning if this ever grew.
 - **No per-member permissions.** Any member can act on any task in a list

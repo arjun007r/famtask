@@ -45,6 +45,7 @@ import {
   taskLine,
   multipleLists,
   renderBoard,
+  renderPicker,
   renderTaskList,
   renderTaskMenu,
 } from '../src/channel/format.ts';
@@ -66,6 +67,7 @@ import type {
   OutboundMessage,
   RenderedMessage,
 } from '../src/channel/types.ts';
+import type { View } from '../src/core/services/views.ts';
 import { rememberView } from '../src/core/services/views.ts';
 import type { FamilyMember, TaskView } from '../src/core/types.ts';
 
@@ -1134,6 +1136,61 @@ describe('button taps', () => {
     };
   }
 
+  it('picks the task by name, finishes it, and comes back to the board', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'board_pick', mode: 'done' }));
+
+    // The picker is drawn over the board in the same message, reading its
+    // rows off the board underneath rather than carrying ids of its own.
+    assert.match(st.last()!.text, /Which one is done\?/);
+    const row = st.last()!.buttons![0]![0]!;
+    assert.equal(row.label, '\u25cb Book the HVAC service');
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'todo', 'opening it changes nothing');
+
+    await handleInboundAction(st.deps, tap(row.action));
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'done');
+    assert.match(st.last()!.text, /Your tasks/, 'and the picker is gone');
+    assert.match(st.last()!.text, /\u2713  Book the HVAC service/);
+  });
+
+  it('backs out of the picker without touching anything', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'board_pick', mode: 'done' }));
+    await handleInboundAction(st.deps, tap({ kind: 'view_back' }));
+
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'todo');
+    assert.match(st.last()!.text, /Your tasks/);
+  });
+
+  it('offers a way back from a task finished by mistake', async () => {
+    const st = await stage();
+    await handleInboundAction(st.deps, tap({ kind: 'board_pick', mode: 'done' }));
+    await handleInboundAction(st.deps, tap({ kind: 'task_done_confirm', taskId: st.task.id }));
+
+    // Manage is still there on a finished board, and a closed task leads
+    // with Reopen -- which is what makes finishing without a confirmation
+    // step safe in the first place.
+    await handleInboundAction(st.deps, tap({ kind: 'board_pick', mode: 'manage' }));
+    await handleInboundAction(st.deps, tap({ kind: 'task_menu', taskId: st.task.id }));
+    const labels = st.last()!.buttons!.flat().map((b) => b.label);
+    assert.ok(labels.some((l) => /Reopen/.test(l)), labels.join(' '));
+
+    await handleInboundAction(st.deps, tap({ kind: 'task_reopen', taskId: st.task.id }));
+    assert.equal((await getTaskView(st.db, st.task.id)).state, 'todo');
+    assert.match(st.last()!.text, /Your tasks/);
+  });
+
+  it('never offers a task the board no longer shows', async () => {
+    const st = await stage();
+    // Finished elsewhere -- another member's tap, a second device -- after
+    // this board was drawn.
+    await setState(st.db, st.task.id, 'done', st.arjun.id);
+    await handleInboundAction(st.deps, tap({ kind: 'board_pick', mode: 'done' }));
+
+    assert.match(st.last()!.text, /Nothing left to pick/);
+    assert.deepEqual(st.last()!.buttons!.flat().map((b) => b.label), ['\u21a9 Back']);
+  });
+
   it('asks before finishing a task, and changes nothing until confirmed', async () => {
     const st = await stage();
     await handleInboundAction(st.deps, tap({ kind: 'task_done', taskId: st.task.id }));
@@ -1161,7 +1218,7 @@ describe('button taps', () => {
 
     assert.equal((await getTaskView(st.db, st.task.id)).state, 'done');
     // The screen itself says so -- not just the toast, which vanishes.
-    assert.match(st.last()!.text, /✓ Book the HVAC service/);
+    assert.match(st.last()!.text, /✓  Book the HVAC service/);
     assert.match(st.last()!.text, /Your tasks/);
     assert.ok(st.toasts.some((t) => t?.includes('Done: Book the HVAC service')));
   });
@@ -1184,7 +1241,7 @@ describe('button taps', () => {
 
     assert.equal((await getTaskView(st.db, st.task.id)).state, 'blocked');
     assert.match(st.last()!.text, /Your tasks/);
-    assert.match(st.last()!.text, /⛔ Book the HVAC service/);
+    assert.match(st.last()!.text, /⊘  Book the HVAC service/);
   });
 
   it('reassigns to another family member and tells them', async () => {
@@ -1201,7 +1258,7 @@ describe('button taps', () => {
     );
     const after = await getTaskView(st.db, st.task.id);
     assert.equal(after.assigned_to, st.priya.id);
-    assert.match(st.last()!.text, /— Priya/);
+    assert.match(st.last()!.text, /^ +Priya$/m);
     assert.ok(st.sent.some((m) => m.chatId === '1002' && /passed you/.test(m.text)));
   });
 
@@ -1598,7 +1655,7 @@ describe('a family split across two messaging apps', () => {
     // The consolation for a member with no group on their channel: unclaimed
     // family work still reaches them, in the tail of their own digest.
     const hers = wa.sent.find((m) => m.chatId === '15550001111');
-    assert.match(hers!.text, /Up for grabs/);
+    assert.match(hers!.text, /UP FOR GRABS/);
     assert.match(hers!.text, /Book the chimney sweep/);
   });
 
@@ -1828,7 +1885,7 @@ describe('what got finished', () => {
     const counts: Record<string, number> = {};
     for (const period of ['week', 'month', 'quarter', 'year'] as const) {
       const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period, now: NOW });
-      counts[period] = (answer.text.match(/^\d+\. /gm) ?? []).length;
+      counts[period] = (answer.text.match(/^✓  /gm) ?? []).length;
     }
     assert.deepEqual(counts, { week: 1, month: 2, quarter: 3, year: 4 });
   });
@@ -1866,9 +1923,10 @@ describe('what got finished', () => {
     await closed('Newer', 1);
     const answer = await answerQuery(env.db, env.arjun, { scope: 'completed', period: 'week', now: NOW });
     assert.ok(answer.text.indexOf('Newer') < answer.text.indexOf('Older'));
-    const kinds = (answer.buttons ?? []).flat().map((b) => b.action.kind);
-    assert.ok(!kinds.includes('task_done'), 'nothing left to finish');
-    assert.ok(kinds.includes('task_menu'), 'but the history is still reachable');
+    const actions = (answer.buttons ?? []).flat().map((b) => b.action);
+    const modes = actions.flatMap((a) => (a.kind === 'board_pick' ? [a.mode] : []));
+    assert.ok(!modes.includes('done'), 'nothing left to finish');
+    assert.ok(modes.includes('manage'), 'but the history is still reachable');
   });
 
   it('counts the open ones out of the heading', async () => {
@@ -1885,49 +1943,89 @@ describe('the board keyboard', () => {
     env = await setup();
   });
 
-  it('refers to the numbers on screen instead of repeating truncated titles', async () => {
-    for (const title of ['Schedule roof cleaning for the Puyallup home', 'Upload docs for Ownwell']) {
-      await createTask(env.db, {
-        familyId: env.familyId,
-        listId: env.home.id,
-        title,
-        createdBy: env.arjun.id,
-        assigneeKind: 'member',
-        assignedTo: env.arjun.id,
-      });
-    }
-    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
-    const labels = board.buttons!.flat().map((b) => b.label);
-    assert.deepEqual(labels, ['✓ 1', '✓ 2', '⋯ 1', '⋯ 2']);
-    for (const label of labels) {
-      assert.ok(!label.includes('…'), `"${label}" should never need truncating`);
-    }
-  });
-
-  it('packs four to a row rather than one per line', async () => {
-    for (let i = 0; i < 7; i += 1) {
-      await createTask(env.db, {
-        familyId: env.familyId,
-        listId: env.home.id,
-        title: `Task ${i + 1}`,
-        createdBy: env.arjun.id,
-        assigneeKind: 'member',
-        assignedTo: env.arjun.id,
-      });
-    }
-    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
-    assert.deepEqual(board.buttons!.map((r) => r.length), [4, 3, 4, 3]);
-  });
-
-  it('numbers unclaimed work in the same run, so a button number is unambiguous', async () => {
-    const mine = await createTask(env.db, {
+  async function mine(title: string) {
+    return createTask(env.db, {
       familyId: env.familyId,
       listId: env.home.id,
-      title: 'Mine',
+      title,
       createdBy: env.arjun.id,
       assigneeKind: 'member',
       assignedTo: env.arjun.id,
     });
+  }
+
+  it('offers the same three buttons whether the list is short or long', async () => {
+    await mine('Schedule roof cleaning for the Puyallup home');
+    const two = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    assert.deepEqual(two.buttons!.map((r) => r.map((b) => b.label)), [['\u2713 Complete', '\u22ef Manage']]);
+
+    for (let i = 0; i < 8; i += 1) await mine(`Task ${i + 1}`);
+    const many = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    assert.deepEqual(many.buttons, two.buttons, 'nine tasks cost no more buttons than one');
+  });
+
+  it('never needs to truncate a button label', async () => {
+    await mine('Schedule roof cleaning for the Puyallup home');
+    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    for (const label of board.buttons!.flat().map((b) => b.label)) {
+      assert.ok(!label.includes('\u2026'), `"${label}" should never need truncating`);
+    }
+  });
+
+  it('reads a task as a title with everything else underneath it', async () => {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Fix the garage door',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      dueAt: '2026-01-02T09:00:00Z',
+    });
+    const board = renderBoard(
+      { preamble: 'Your day', tasks: [await getTaskView(env.db, task.id)], unclaimed: [] },
+      new Date('2026-01-01T09:00:00Z'),
+    );
+    assert.match(board.text, /^\u25cb {2}Fix the garage door$/m);
+    // The due date reads as someone would say it, and the owner sits under
+    // the title rather than trailing off the end of it.
+    assert.match(board.text, /^ {4}tomorrow \u00b7 Arjun$/m);
+  });
+
+  it('says "you" on your own board and names everyone else', async () => {
+    const task = await mine('Call the plumber');
+    const view = await getTaskView(env.db, task.id);
+    assert.match(renderBoard({ preamble: 'x', tasks: [view], unclaimed: [], viewer: env.arjun.id }).text, /\byou\b/);
+    assert.match(renderBoard({ preamble: 'x', tasks: [view], unclaimed: [] }).text, /Arjun/);
+  });
+
+  it('marks an overdue task ahead of its state, and says what it was due', async () => {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Renew the passport',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+      dueAt: '2026-01-01T09:00:00Z',
+    });
+    const board = renderBoard(
+      { preamble: 'Your day', tasks: [await getTaskView(env.db, task.id)], unclaimed: [] },
+      new Date('2026-01-02T09:00:00Z'),
+    );
+    assert.match(board.text, /^! {2}Renew the passport$/m);
+    assert.match(board.text, /was due yesterday/);
+    assert.match(board.text, /^1 open \u00b7 1 overdue$/m);
+  });
+
+  it('drops Complete when nothing is open and Claim when nothing is going spare', async () => {
+    const task = await mine('Already handled');
+    await setState(env.db, task.id, 'done', env.arjun.id);
+    const board = renderTaskList('History:', [await getTaskView(env.db, task.id)]);
+    assert.deepEqual(board.buttons!.flat().map((b) => b.label), ['\u22ef Manage']);
+  });
+
+  it('offers Claim only when something is up for grabs', async () => {
     const open = await createTask(env.db, {
       familyId: env.familyId,
       listId: env.home.id,
@@ -1937,29 +2035,82 @@ describe('the board keyboard', () => {
     });
     const board = renderBoard({
       preamble: 'Morning',
-      tasks: [await getTaskView(env.db, mine.id)],
+      tasks: [],
       unclaimed: [await getTaskView(env.db, open.id)],
     });
-    assert.match(board.text, /^1\. .*Mine/m);
-    assert.match(board.text, /^2\. .*Anyones/m);
-    const labels = board.buttons!.flat().map((b) => b.label);
-    assert.deepEqual(labels, ['✓ 1', '🙋 2', '⋯ 1', '⋯ 2']);
+    assert.deepEqual(board.buttons!.flat().map((b) => b.label), ['+ Claim', '\u22ef Manage']);
+    // No heading when there is nothing above it to divide from.
+    assert.doesNotMatch(board.text, /UP FOR GRABS/);
   });
 
-  it('explains the symbols once, not per line', async () => {
-    await createTask(env.db, {
+  it('shows no more tasks than its picker can offer, and says how many it held back', async () => {
+    for (let i = 0; i < 12; i += 1) await mine(`Task ${i + 1}`);
+    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
+    const view = board.view as Extract<View, { k: 'board' }>;
+    assert.equal(view.ids.length, 9);
+    assert.equal((board.text.match(/^\u25cb {2}/gm) ?? []).length, 9);
+    assert.match(board.text, /\u2026and 3 more/);
+  });
+});
+
+describe('picking which task', () => {
+  let env: Awaited<ReturnType<typeof setup>>;
+  beforeEach(async () => {
+    env = await setup();
+  });
+
+  it('names the task in words, which a numbered button could not', async () => {
+    const task = await createTask(env.db, {
       familyId: env.familyId,
       listId: env.home.id,
-      title: 'Something',
+      title: 'Book the chimney sweep',
       createdBy: env.arjun.id,
       assigneeKind: 'member',
       assignedTo: env.arjun.id,
     });
-    const board = renderTaskList('Your tasks:', await queryTasks(env.db, { familyId: env.familyId }));
-    assert.equal((board.text.match(/✓ done/g) ?? []).length, 1);
+    const picker = renderPicker('done', [await getTaskView(env.db, task.id)]);
+    assert.match(picker.text, /Which one is done\?/);
+    const labels = picker.buttons!.flat().map((b) => b.label);
+    assert.deepEqual(labels, ['\u25cb Book the chimney sweep', '\u21a9 Back']);
+  });
+
+  it('applies straight away, because the row you tapped said what it was', async () => {
+    const task = await createTask(env.db, {
+      familyId: env.familyId,
+      listId: env.home.id,
+      title: 'Book the chimney sweep',
+      createdBy: env.arjun.id,
+      assigneeKind: 'member',
+      assignedTo: env.arjun.id,
+    });
+    const picker = renderPicker('done', [await getTaskView(env.db, task.id)]);
+    assert.equal(picker.buttons![0]![0]!.action.kind, 'task_done_confirm');
+  });
+
+  it('keeps Back reachable inside WhatsApp\u2019s ten-row list', async () => {
+    const tasks = [];
+    for (let i = 0; i < 20; i += 1) {
+      const t = await createTask(env.db, {
+        familyId: env.familyId,
+        listId: env.home.id,
+        title: `Task ${i + 1}`,
+        createdBy: env.arjun.id,
+        assigneeKind: 'member',
+        assignedTo: env.arjun.id,
+      });
+      tasks.push(await getTaskView(env.db, t.id));
+    }
+    const picker = renderPicker('manage', tasks);
+    assert.equal(picker.buttons!.length, 10);
+    assert.equal(picker.buttons!.at(-1)![0]!.label, '\u21a9 Back');
+  });
+
+  it('says so rather than showing an empty list when the board moved on', () => {
+    const picker = renderPicker('claim', []);
+    assert.match(picker.text, /Nothing left to pick/);
+    assert.deepEqual(picker.buttons!.flat().map((b) => b.label), ['\u21a9 Back']);
   });
 });
-
 describe('empty string is how the schema says null', () => {
   it('turns every blank the model emits back into null', () => {
     const parsed = normalize({

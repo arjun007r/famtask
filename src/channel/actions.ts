@@ -18,6 +18,7 @@ const TAGS = {
   task_show: 'tv',
   task_menu: 'tm',
   task_reassign: 'tr',
+  task_reopen: 'to',
   task_waiting_clear: 'wc',
   task_assign: 'ta',
   digest_list_toggle: 'dl',
@@ -27,6 +28,11 @@ const TAGS = {
  *  into a real digest once the person taps it. */
 const DIGEST_SHOW = 'ds';
 
+/** Carries a mode rather than an id: the picker reads the tasks off the
+ *  board it is drawn over. */
+const BOARD_PICK = 'pk';
+const PICK_MODES = ['done', 'claim', 'manage'] as const;
+
 export function encodeAction(action: Action): string {
   switch (action.kind) {
     case 'noop':
@@ -35,6 +41,8 @@ export function encodeAction(action: Action): string {
       return 'bk';
     case 'digest_show':
       return DIGEST_SHOW;
+    case 'board_pick':
+      return `${BOARD_PICK}:${action.mode}`;
     case 'digest_list_toggle':
       return `${TAGS.digest_list_toggle}:${action.listId}`;
     case 'task_assign':
@@ -68,6 +76,12 @@ export function decodeAction(data: string): Action {
       return { kind: 'task_menu', taskId: id };
     case TAGS.task_reassign:
       return { kind: 'task_reassign', taskId: id };
+    case TAGS.task_reopen:
+      return { kind: 'task_reopen', taskId: id };
+    case BOARD_PICK:
+      return PICK_MODES.includes(id as (typeof PICK_MODES)[number])
+        ? { kind: 'board_pick', mode: id as (typeof PICK_MODES)[number] }
+        : { kind: 'noop' };
     case TAGS.task_waiting_clear:
       return { kind: 'task_waiting_clear', taskId: id };
     case TAGS.task_assign:

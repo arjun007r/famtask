@@ -44,12 +44,13 @@ unreachable, and — as of 14 Sep 2026 — **the daily digest**, which fired on
 schedule with the agent's intro line, the OVERDUE marker and due-date
 priority escalation all correct on its first real run.
 
-**Verified by tests:** 142 unit tests — state machine, ranking, due-date
+**Verified by tests:** 154 unit tests — state machine, ranking, due-date
 escalation, the ≤3 digest-list rule, digest assembly and timezone gating,
 inbox intents against fixtures, agent-outage handling, the Telegram codec,
 the strict-schema invariants, the one-way mirror, line formatting, the
-button flow (confirm-before-done, the ⋯ menu, reassignment, in-place
-redraw, and taps on messages with no recorded view), waiting-on
+button flow (the three-button board and its picker, confirm-before-done on
+the ⋯ menu, reopening, reassignment, in-place redraw, and taps on messages
+with no recorded view), waiting-on
 (outsider capture, the family-member guard, clearing, and `/waiting`), and
 digest fan-out across two channels at once.
 

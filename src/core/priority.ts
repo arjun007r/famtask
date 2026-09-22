@@ -77,7 +77,7 @@ export function rankScore(
 
 /** Whole calendar days between two instants, UTC. Subtracting timestamps
  *  would call a task due at midnight today "overdue" by mid-morning. */
-function dayDiff(from: Date, to: Date): number {
+export function dayDiff(from: Date, to: Date): number {
   const a = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
   const b = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
   return Math.round((b - a) / 86_400_000);

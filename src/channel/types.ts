@@ -4,7 +4,7 @@
  * lives in src/telegram and implements these types.
  */
 
-import type { View } from '../core/services/views.ts';
+import type { PickMode, View } from '../core/services/views.ts';
 
 export type ChatType = 'dm' | 'group';
 
@@ -34,6 +34,10 @@ export type Action =
   | { kind: 'task_show'; taskId: string }
   | { kind: 'task_menu'; taskId: string }
   | { kind: 'task_reassign'; taskId: string }
+  /** Put a finished task back on the list -- the way back from a mis-tap. */
+  | { kind: 'task_reopen'; taskId: string }
+  /** The board says what; this asks which task it applies to. */
+  | { kind: 'board_pick'; mode: PickMode }
   /** The outsider came back; setting a wait needs free text, so it stays a message. */
   | { kind: 'task_waiting_clear'; taskId: string }
   /** `to` is a member id, or 'group' for up-for-grabs. */

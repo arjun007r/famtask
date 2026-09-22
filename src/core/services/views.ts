@@ -14,17 +14,26 @@
 import type { Db } from '../db/adapter.ts';
 import { getState, setState } from './state.ts';
 
+/** Which board-level action a picker is choosing a task for. */
+export type PickMode = 'done' | 'claim' | 'manage';
+
+/** The views that stack on top of another view rather than replacing it.
+ *  Every one of them carries the view it covers, so Back restores it. */
+type Overlays =
+  | { k: 'detail'; id: string }
+  | { k: 'menu'; id: string }
+  | { k: 'confirm'; id: string }
+  | { k: 'assign'; id: string }
+  /** The board's chooser: three buttons ask what, this asks which. */
+  | { k: 'pick'; mode: PickMode };
+
+export type Overlay = Overlays & { back?: View };
+
 export type View =
   /** A list of tasks: the digest, the group board, any /command listing. */
   | { k: 'board'; preamble: string; footer?: string; ids: string[]; claimIds: string[] }
   | { k: 'lists' }
-  | { k: 'detail'; id: string; back?: View }
-  | { k: 'menu'; id: string; back?: View }
-  | { k: 'confirm'; id: string; back?: View }
-  | { k: 'assign'; id: string; back?: View };
-
-/** The views that stack on top of another view rather than replacing it. */
-export type Overlay = Extract<View, { id: string }>;
+  | Overlay;
 
 const KEY_PREFIX = 'view:';
 const key = (chatId: string, messageId: string) => `${KEY_PREFIX}${chatId}:${messageId}`;

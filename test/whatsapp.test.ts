@@ -23,7 +23,7 @@ import {
 } from '../src/whatsapp/webhook.ts';
 import { handleInboundAction, handleInboundMessage, type AppDeps } from '../src/app.ts';
 import { rememberView } from '../src/core/services/views.ts';
-import { renderTaskList } from '../src/channel/format.ts';
+import { renderPicker, renderTaskList } from '../src/channel/format.ts';
 import type { Button } from '../src/channel/types.ts';
 
 /** Records every request body, and can be told to fail the next send. */
@@ -87,7 +87,7 @@ describe('whatsapp: button collapsing', () => {
     assert.deepEqual(flat.map((b) => b.label), ['b', 'a'], 'primary first regardless of layout');
   });
 
-  it('keeps a real digest fully tappable within the ten-row cap', async () => {
+  it('sends the board as three reply buttons and its picker as a list', async () => {
     const { db } = memoryDb();
     const family = await ensureFamily(db, 'Home');
     const me = await addMember(db, {
@@ -108,24 +108,34 @@ describe('whatsapp: button collapsing', () => {
         assignedTo: me.id,
       });
     }
-    const { api, sent } = fakeApi();
-    const board = renderTaskList('Your tasks', await queryTasks(db, { familyId: family.id }));
-    await whatsAppChannel(api).send({ chatId: '15550001111', ...board });
+    const tasks = await queryTasks(db, { familyId: family.id });
 
-    const rows = (sent.find((b: any) => b.type === 'interactive') as any).interactive.action
-      .sections[0].rows;
-    assert.equal(rows.length, 10);
+    // The board fits WhatsApp's three reply buttons exactly, which is the
+    // whole reason it stops at three.
+    const { api, sent } = fakeApi();
+    await whatsAppChannel(api).send({ chatId: '15550001111', ...renderTaskList('Your tasks', tasks) });
+    const board = sent.find((b: any) => b.type === 'interactive') as any;
+    assert.equal(board.interactive.type, 'button');
+    assert.equal(board.interactive.action.buttons.length, 2, 'Complete and Manage; nothing spare');
+
+    // Choosing a task is where the ten-row list earns its keep, and every
+    // task the board showed has to be in it.
+    const second = fakeApi();
+    await whatsAppChannel(second.api).send({ chatId: '15550001111', ...renderPicker('done', tasks) });
+    const picker = second.sent.find((b: any) => b.type === 'interactive') as any;
+    assert.equal(picker.interactive.type, 'list');
+    const rows = picker.interactive.action.sections[0].rows;
+    assert.ok(rows.length <= 10, 'WhatsApp refuses an eleventh row');
     const reachable = new Set(
-      rows.map((r: any) => {
+      rows.flatMap((r: any) => {
         const action = decodeAction(r.id);
-        return 'taskId' in action ? action.taskId : null;
+        return 'taskId' in action ? [action.taskId] : [];
       }),
     );
-    assert.equal(reachable.size, 8, 'every task on screen has at least one button');
+    const shown = (renderTaskList('Your tasks', tasks).view as any).ids as string[];
+    assert.deepEqual([...reachable].sort(), [...shown].sort(), 'everything on screen is tappable');
   });
-});
 
-describe('whatsapp: sending', () => {
   it('uses reply buttons for three or fewer', async () => {
     const { api, sent } = fakeApi();
     await whatsAppChannel(api).send({

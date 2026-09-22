@@ -1,17 +1,18 @@
 import type { Digest } from '../core/services/digest.ts';
-import { effectivePriority, timingOf } from '../core/priority.ts';
+import { dayDiff, effectivePriority, timingOf } from '../core/priority.ts';
 import { stateLabel } from '../core/state-machine.ts';
 import type { TaskEvent, TaskList, TaskView } from '../core/types.ts';
 import type { FamilyMember } from '../core/types.ts';
 import { isClosed } from '../core/state-machine.ts';
+import type { PickMode } from '../core/services/views.ts';
 import type { Button, RenderedMessage } from './types.ts';
 
 const PRIORITY_MARK: Record<string, string> = { high: '!!', medium: '', low: '·' };
 const STATE_MARK: Record<string, string> = {
   todo: '○',
   in_progress: '▶',
-  blocked: '⛔',
-  needs_clarification: '❓',
+  blocked: '⊘',
+  needs_clarification: '?',
   done: '✓',
   cancelled: '✕',
 };
@@ -60,22 +61,105 @@ export function taskLine(task: TaskView, opts: LineOptions = {}): string {
   return `${n}${mark} ${pri ? `${pri} ` : ''}${task.title}${due}${list}${owner}${waiting}`.trim();
 }
 
-/** Four short labels sit comfortably across a phone; more and they shrink
- *  to the point of mis-tapping. */
-const BUTTONS_PER_ROW = 4;
-
-function grid(buttons: Button[]): Button[][] {
-  const rows: Button[][] = [];
-  for (let i = 0; i < buttons.length; i += BUTTONS_PER_ROW) {
-    rows.push(buttons.slice(i, i + BUTTONS_PER_ROW));
-  }
-  return rows;
-}
+/**
+ * How many tasks a board shows, and the picker therefore has to offer.
+ *
+ * WhatsApp allows ten rows in a list message and the picker needs one of
+ * them for Back, which leaves nine. The board honours the same nine so that
+ * everything on screen is reachable -- a board that listed more than its
+ * own picker could offer would show tasks nothing could act on.
+ */
+const MAX_ROWS = 9;
 
 /** A list tag on every line when there is only one list is noise, and it
  *  reads as an assignee. */
 export function multipleLists(tasks: TaskView[]): boolean {
   return new Set(tasks.map((t) => t.list_name)).size > 1;
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A due date as someone would say it out loud. "2026-09-23" makes a reader
+ * do arithmetic before they know whether it matters; "tomorrow" does not.
+ */
+export function relativeDate(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const days = dayDiff(now, d);
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days === -1) return 'yesterday';
+  // Inside the coming week a weekday name is both shorter and unambiguous.
+  // Past that it stops being unambiguous, so fall back to the date.
+  if (days > 1 && days < 7) return WEEKDAYS[d.getUTCDay()] ?? shortDate(iso);
+  if (days < -1 && days > -7) return `last ${WEEKDAYS[d.getUTCDay()] ?? ''}`.trim();
+  return `${MONTHS[d.getUTCMonth()] ?? ''} ${d.getUTCDate()}`.trim();
+}
+
+/** Overdue outranks the state glyph: a late task is the one thing a reader
+ *  should find without reading. */
+function boardMark(task: TaskView, now: Date): string {
+  if (!isClosed(task.state) && timingOf(task, now) === 'overdue') return '!';
+  return STATE_MARK[task.state] ?? '\u25cb';
+}
+
+function ownerWord(task: TaskView, viewer?: string): string {
+  if (task.assignee_kind === 'group') return 'up for grabs';
+  if (task.assignee_kind === 'unassigned' || !task.assignee_name) return 'unassigned';
+  // Your own name repeated down the margin of your own digest is noise;
+  // everyone else's name is the first thing a family looks for.
+  if (viewer && task.assigned_to === viewer) return 'you';
+  return firstName(task.assignee_name);
+}
+
+interface EntryOptions {
+  showList?: boolean;
+  showOwner?: boolean;
+  viewer?: string;
+}
+
+/**
+ * The second line of a board entry: everything about a task that is not its
+ * title, in the order a reader wants it -- when, who, what is holding it
+ * up. One line only; the rest is what the detail view is for.
+ */
+function boardMeta(task: TaskView, now: Date, opts: EntryOptions): string {
+  const open = !isClosed(task.state);
+  const bits: string[] = [];
+  if (task.due_at && open) {
+    const when = relativeDate(task.due_at, now);
+    bits.push(timingOf(task, now) === 'overdue' ? `was due ${when}` : when);
+  }
+  if (opts.showOwner !== false) bits.push(ownerWord(task, opts.viewer));
+  // Spelled out rather than marked with a glyph: who holds a task has been
+  // misread here before, and "waiting on the plumber" is a second holder.
+  if (task.waiting_on && open) bits.push(`waiting on ${task.waiting_on}`);
+  if (opts.showList) bits.push(task.list_name);
+  // Redundant next to "was due Monday", which already says it is urgent.
+  if (open && task.priority === 'high' && timingOf(task, now) !== 'overdue') bits.push('high');
+  return bits.join(' \u00b7 ');
+}
+
+/** One task, two lines: the glyph and title a reader scans down, then
+ *  everything else indented underneath. */
+function entry(task: TaskView, now: Date, opts: EntryOptions): string {
+  const head = `${boardMark(task, now)}  ${task.title}`;
+  const meta = boardMeta(task, now, opts);
+  return meta ? `${head}\n    ${meta}` : head;
+}
+
+/** "5 open · 1 overdue" -- the line that says whether to keep reading. */
+function summarise(tasks: TaskView[], now: Date): string {
+  const open = tasks.filter((t) => !isClosed(t.state));
+  const overdue = open.filter((t) => timingOf(t, now) === 'overdue');
+  const closed = tasks.length - open.length;
+  const bits: string[] = [];
+  if (open.length > 0) bits.push(`${open.length} open`);
+  if (overdue.length > 0) bits.push(`${overdue.length} overdue`);
+  if (closed > 0) bits.push(`${closed} done`);
+  return bits.join(' \u00b7 ');
 }
 
 export interface BoardView {
@@ -85,62 +169,64 @@ export interface BoardView {
   /** Nobody owns these yet; rendered under their own heading, tap to claim. */
   unclaimed: TaskView[];
   footer?: string;
+  /** Whose screen this is. Only used to say "you" instead of their name. */
+  viewer?: string;
 }
 
 /**
  * The one renderer behind every task listing -- digest, group board, command
  * output. Sharing it means a tap redraws any of them the same way, with the
  * same buttons, from live rows.
+ *
+ * Two lines per task, and three buttons however long the list is. The
+ * version before this one put a button on screen per task and labelled it
+ * with the line number: it doubled the height of every message, and it made
+ * the reader match "3" against a line before every single tap. Choosing the
+ * task is now a step of its own (renderPicker) -- one more tap, in exchange
+ * for a board that reads like something a person wrote down.
  */
 export function renderBoard(board: BoardView, now: Date = new Date()): RenderedMessage {
-  const { preamble, tasks, unclaimed, footer } = board;
-  const lines: string[] = [preamble, ''];
-  const showList = multipleLists([...tasks, ...unclaimed]);
+  const { preamble, footer, viewer } = board;
+  // Truncated here rather than by each caller, so the ids recorded in the
+  // view are exactly the ones on screen and the picker can never offer a
+  // row the reader cannot see.
+  const tasks = board.tasks.slice(0, MAX_ROWS);
+  const unclaimed = board.unclaimed.slice(0, Math.max(0, MAX_ROWS - tasks.length));
+  const hidden = board.tasks.length + board.unclaimed.length - tasks.length - unclaimed.length;
+  const all = [...tasks, ...unclaimed];
+  const opts: EntryOptions = {
+    showList: multipleLists(all),
+    ...(viewer ? { viewer } : {}),
+  };
 
-  // One run of numbers across both sections, so a button can say "3" and
-  // mean the third line whichever section it is in.
-  const numbered = [...tasks, ...unclaimed];
-  if (numbered.length === 0) {
-    lines.push('Nothing here right now. 🎉');
-  } else {
-    tasks.forEach((t, i) => lines.push(taskLine(t, { index: i + 1, now, showList })));
-  }
+  const lines: string[] = [preamble];
+  const counts = summarise(all, now);
+  if (counts) lines.push(counts);
+  if (all.length === 0) lines.push('', 'Nothing here right now. \u{1F389}');
 
+  for (const t of tasks) lines.push('', entry(t, now, opts));
   if (unclaimed.length > 0) {
-    if (tasks.length > 0) lines.push('', 'Up for grabs:');
-    unclaimed.forEach((t, i) =>
-      lines.push(taskLine(t, { index: tasks.length + i + 1, now, showList, showOwner: false })),
-    );
+    // Only worth a heading when there is something above it to divide from.
+    if (tasks.length > 0) lines.push('', 'UP FOR GRABS');
+    for (const t of unclaimed) lines.push('', entry(t, now, { ...opts, showOwner: false }));
   }
-  if (numbered.some((t) => !isClosed(t.state))) {
-    lines.push('', unclaimed.length > 0 ? '✓ done · 🙋 claim · ⋯ more' : '✓ done · ⋯ more');
-  }
+  if (hidden > 0) lines.push('', `…and ${hidden} more. Narrow it down and I'll show those.`);
   if (footer) lines.push('', footer);
 
-  // Buttons refer to the numbers already on screen rather than repeating the
-  // titles. A label like "✓ Schedule roof cleanin…" is unreadable, and seven
-  // of them stacked under the list doubles the message for no information.
-  const primary: Button[] = [];
-  const more: Button[] = [];
-  numbered.forEach((task, i) => {
-    const n = i + 1;
-    const claimable = i >= tasks.length;
-    if (!isClosed(task.state)) {
-      primary.push({
-        label: claimable ? `🙋 ${n}` : `✓ ${n}`,
-        action: claimable
-          ? { kind: 'task_claim', taskId: task.id }
-          : { kind: 'task_done', taskId: task.id },
-        primary: true,
-      });
-    }
-    more.push({ label: `⋯ ${n}`, action: { kind: 'task_menu', taskId: task.id } });
-  });
-  const buttons = [...grid(primary), ...grid(more)];
+  const row: Button[] = [];
+  if (tasks.some((t) => !isClosed(t.state))) {
+    row.push({ label: '\u2713 Complete', action: { kind: 'board_pick', mode: 'done' }, primary: true });
+  }
+  if (unclaimed.length > 0) {
+    row.push({ label: '+ Claim', action: { kind: 'board_pick', mode: 'claim' }, primary: true });
+  }
+  if (all.length > 0) {
+    row.push({ label: '\u22ef Manage', action: { kind: 'board_pick', mode: 'manage' } });
+  }
 
   return {
     text: lines.join('\n'),
-    buttons: buttons.length ? buttons : undefined,
+    ...(row.length > 0 ? { buttons: [row] } : {}),
     view: {
       k: 'board',
       preamble,
@@ -149,6 +235,45 @@ export function renderBoard(board: BoardView, now: Date = new Date()): RenderedM
       claimIds: unclaimed.map((t) => t.id),
     },
   };
+}
+
+/**
+ * Which task? Drawn over the board in the same message by one of its three
+ * buttons, and closed by acting or by Back.
+ *
+ * Every row carries a title in words, which is the confirmation a numbered
+ * button could never give: you tap the name of the thing you mean. That is
+ * why finishing from here applies straight away rather than asking again --
+ * and why a finished task keeps a Reopen in its menu.
+ */
+export function renderPicker(
+  mode: PickMode,
+  tasks: TaskView[],
+  now: Date = new Date(),
+): RenderedMessage {
+  const [heading, sub] = {
+    done: ['Which one is done?', "Tap it and I'll close it out."],
+    claim: ['Which one will you take?', 'It becomes yours, and the family sees that.'],
+    manage: ['Which one?', 'Opens everything you can do to it.'],
+  }[mode];
+  const rows: Button[][] = tasks.slice(0, MAX_ROWS).map((t) => [
+    {
+      label: `${boardMark(t, now)} ${truncate(t.title, 26)}`,
+      action:
+        mode === 'done'
+          ? ({ kind: 'task_done_confirm', taskId: t.id } as const)
+          : mode === 'claim'
+            ? ({ kind: 'task_claim', taskId: t.id } as const)
+            : ({ kind: 'task_menu', taskId: t.id } as const),
+      primary: true,
+    },
+  ]);
+  const text =
+    rows.length === 0
+      ? ['Nothing left to pick.', '', 'The list moved on while this was open.'].join('\n')
+      : [heading ?? '', '', sub ?? ''].join('\n');
+  rows.push([{ label: '\u21a9 Back', action: { kind: 'view_back' } }]);
+  return { text, buttons: rows, view: { k: 'pick', mode } };
 }
 
 /** The digest's fixed opening line, kept apart so a redraw can reuse it
@@ -176,33 +301,40 @@ export function renderTaskList(
   now: Date = new Date(),
 ): RenderedMessage {
   if (tasks.length === 0) return { text: `${title}\n\nNothing here.` };
-  // Telegram will render any number of rows, but a keyboard taller than the
-  // screen buries the message it belongs to.
-  return renderBoard({ preamble: title, tasks: tasks.slice(0, 8), unclaimed: [] }, now);
+  return renderBoard({ preamble: title, tasks, unclaimed: [] }, now);
 }
 
 /** Everything you can do to one task, opened by the ⋯ button. Keeping the
  *  board rows to two buttons is what makes room for this. */
 export function renderTaskMenu(task: TaskView, now: Date = new Date()): RenderedMessage {
   const lines = [taskLine(task, { now }), '', 'What do you want to do with it?'];
-  const rows: Button[][] = [
-    [
-      { label: '✓ Done', action: { kind: 'task_done', taskId: task.id } },
-      { label: '▶ Start', action: { kind: 'task_start', taskId: task.id } },
-    ],
-    [
-      { label: '⛔ Blocked', action: { kind: 'task_block', taskId: task.id } },
-      { label: '❓ Needs info', action: { kind: 'task_ask', taskId: task.id } },
-    ],
-    [
-      { label: '👤 Reassign', action: { kind: 'task_reassign', taskId: task.id } },
-      { label: '💬 Details', action: { kind: 'task_show', taskId: task.id } },
-    ],
-  ];
+  // Reopen is the whole safety net under finishing a task from the picker
+  // without a confirmation step, so a closed task leads with it.
+  const rows: Button[][] = isClosed(task.state)
+    ? [
+        [
+          { label: '↺ Reopen', action: { kind: 'task_reopen', taskId: task.id }, primary: true },
+          { label: '≡ Details', action: { kind: 'task_show', taskId: task.id } },
+        ],
+      ]
+    : [
+        [
+          { label: '✓ Done', action: { kind: 'task_done', taskId: task.id }, primary: true },
+          { label: '▶ Start', action: { kind: 'task_start', taskId: task.id } },
+        ],
+        [
+          { label: '⊘ Blocked', action: { kind: 'task_block', taskId: task.id } },
+          { label: '? Needs info', action: { kind: 'task_ask', taskId: task.id } },
+        ],
+        [
+          { label: '→ Reassign', action: { kind: 'task_reassign', taskId: task.id } },
+          { label: '≡ Details', action: { kind: 'task_show', taskId: task.id } },
+        ],
+      ];
   if (task.waiting_on) {
     rows.push([
       {
-        label: `✅ ${truncate(task.waiting_on, 18)} came back`,
+        label: `✓ ${truncate(task.waiting_on, 18)} came back`,
         action: { kind: 'task_waiting_clear', taskId: task.id },
       },
     ]);
@@ -239,7 +371,7 @@ export function renderAssignPicker(
   ]);
   rows.push([
     {
-      label: `${task.assignee_kind === 'group' ? '• ' : ''}🙌 Up for grabs`,
+      label: `${task.assignee_kind === 'group' ? '• ' : ''}+ Up for grabs`,
       action: { kind: 'task_assign' as const, taskId: task.id, to: 'group' },
     },
   ]);
@@ -301,10 +433,10 @@ export function renderTaskDetail(
       [
         { label: '✓ Done', action: { kind: 'task_done', taskId: task.id } },
         { label: '▶ Start', action: { kind: 'task_start', taskId: task.id } },
-        { label: '⛔ Block', action: { kind: 'task_block', taskId: task.id } },
+        { label: '⊘ Block', action: { kind: 'task_block', taskId: task.id } },
       ],
       [
-        { label: '👤 Reassign', action: { kind: 'task_reassign', taskId: task.id } },
+        { label: '→ Reassign', action: { kind: 'task_reassign', taskId: task.id } },
         { label: '↩ Back', action: { kind: 'view_back' } },
       ],
     ],

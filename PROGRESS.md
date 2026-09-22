@@ -38,12 +38,14 @@
 - **Several tasks from one message** — the agent splits a sentence into as many
   tasks as it holds, each keeping its own owner; `/add` splits on newlines and
   semicolons, never on "and".
-- **Interactive buttons** (`src/core/services/views.ts`) — listings are numbered and the
-  keyboard refers to those numbers four to a row, rather than repeating
-  truncated titles one per line. `⋯` opens Start / Blocked / Needs info /
-  Reassign / Details. `✓` asks for confirmation first. Taps edit the message
-  in place, so the screen reflects the change immediately, and Back restores
-  what an overlay covered.
+- **Interactive buttons** (`src/core/services/views.ts`) — a listing carries three
+  buttons whatever its length (`✓ Complete`, `+ Claim`, `⋯ Manage`); each opens a
+  picker that names the tasks in words. Earlier designs repeated truncated
+  titles, then line numbers; both put a button per task on screen. `⋯` opens
+  Start / Blocked / Needs info / Reassign / Details, and Reopen on a closed
+  task. Picking a named row finishes it outright; `✓ Done` inside the `⋯`
+  menu still confirms. Taps edit the message in place, so the screen reflects
+  the change immediately, and Back restores what an overlay covered.
 - **Members with no device** — `channel = 'offline'` plus a guardian whose
   digest carries their work. A kid can own tasks without owning a phone.
 - **WhatsApp** (`src/whatsapp/`) — Cloud API adapter: signed webhook, reply

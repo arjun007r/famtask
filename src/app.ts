@@ -8,6 +8,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { AgentUnavailableError } from './agents/client.ts';
 import { planDigest, applyPlan } from './agents/digest-writer.ts';
 import { parseMessage } from './agents/parser.ts';
+import { isClosed } from './core/state-machine.ts';
 import {
   digestFooter,
   digestPreamble,
@@ -15,6 +16,7 @@ import {
   renderAssignPicker,
   renderBoard,
   renderConfirmDone,
+  renderPicker,
   renderDigestListPicker,
   renderGroupBoard,
   renderTaskDetail,
@@ -403,6 +405,13 @@ async function applyAction(
         send: [{ text: `${member.name} claimed "${task.title}".` }],
       };
     }
+    case 'task_reopen': {
+      await setState(db, act.taskId, 'todo', member.id);
+      const task = await getTaskView(db, act.taskId);
+      return { toast: `Back on the list: ${task.title}`, next: back(current) };
+    }
+    case 'board_pick':
+      return { next: overlay(current, { k: 'pick', mode: act.mode }) };
     case 'task_menu':
       return { next: overlay(current, { k: 'menu', id: act.taskId }) };
     case 'task_reassign':
@@ -517,6 +526,7 @@ async function renderView(
           tasks: [...tasks, ...taken],
           unclaimed: stillOpen,
           ...(view.footer ? { footer: view.footer } : {}),
+          viewer: member.id,
         },
         at,
       );
@@ -529,6 +539,23 @@ async function renderView(
       return renderTaskMenu(await getTaskView(db, view.id), at);
     case 'confirm':
       return renderConfirmDone(await getTaskView(db, view.id), at);
+    case 'pick': {
+      // The picker owns no task ids of its own: it reads them off the board
+      // underneath, so it can never offer a row the board no longer shows.
+      const root = rootOf(view);
+      if (root.k !== 'board') return renderPicker(view.mode, [], at);
+      const owned = await tasksByIds(db, root.ids);
+      const claimables = await tasksByIds(db, root.claimIds);
+      const pool =
+        view.mode === 'claim'
+          ? claimables.filter((t) => t.assignee_kind !== 'member')
+          : [...owned, ...claimables];
+      return renderPicker(
+        view.mode,
+        view.mode === 'manage' ? pool : pool.filter((t) => !isClosed(t.state)),
+        at,
+      );
+    }
     case 'assign':
       return renderAssignPicker(
         await getTaskView(db, view.id),
@@ -656,6 +683,7 @@ async function composeDigest(
       tasks: items,
       unclaimed: digest.unclaimed,
       footer: digestFooter(digest),
+      viewer: member.id,
     },
     at,
   );
